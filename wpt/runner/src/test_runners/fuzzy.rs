@@ -31,6 +31,34 @@ pub fn fuzzy_buffer_diff(test_buffer: &[u8], ref_buffer: &[u8]) -> (u64, u64) {
     (max_difference, differing_pixels)
 }
 
+/// The `content` of the first `<meta name="<name>">` in `html`, whatever the
+/// attribute order and quoting.
+pub fn blitz_meta<'a>(html: &'a str, name: &str) -> Option<&'a str> {
+    static META_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)<meta\s[^>]*>").unwrap());
+    static ATTR_RE: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(r#"([\w-]+)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'>]+))"#).unwrap()
+    });
+
+    META_RE.find_iter(html).find_map(|meta| {
+        let mut meta_name = None;
+        let mut content = None;
+        for attr in ATTR_RE.captures_iter(meta.as_str()) {
+            let value = attr
+                .get(2)
+                .or(attr.get(3))
+                .or(attr.get(4))
+                .unwrap()
+                .as_str();
+            match attr[1].to_ascii_lowercase().as_str() {
+                "name" => meta_name = Some(value),
+                "content" => content = Some(value),
+                _ => {}
+            }
+        }
+        (meta_name == Some(name)).then(|| content.unwrap_or_default())
+    })
+}
+
 /// Tolerance from a Blitz-specific `<meta name="blitz-fuzzy" content="<threshold>;<pixels>">`:
 /// renderings match if at most `pixels` pixels differ by more than `threshold` in any
 /// channel. Unlike WPT's fuzzy tolerance it ignores small differences entirely, which is
@@ -46,46 +74,19 @@ impl ThresholdTolerance {
     /// Panics on a malformed `content`, so a typo can't silently fall back to
     /// the default comparison.
     pub fn from_html(html: &str) -> Option<Self> {
-        static META_RE: LazyLock<Regex> =
-            LazyLock::new(|| Regex::new(r"(?i)<meta\s[^>]*>").unwrap());
-        static ATTR_RE: LazyLock<Regex> = LazyLock::new(|| {
-            Regex::new(r#"([\w-]+)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'>]+))"#).unwrap()
-        });
         static CONTENT_RE: LazyLock<Regex> =
             LazyLock::new(|| Regex::new(r"^\s*(\d+)\s*;\s*(\d+)\s*$").unwrap());
 
-        META_RE.find_iter(html).find_map(|meta| {
-            let mut name = None;
-            let mut content = None;
-            for attr in ATTR_RE.captures_iter(meta.as_str()) {
-                let value = attr
-                    .get(2)
-                    .or(attr.get(3))
-                    .or(attr.get(4))
-                    .unwrap()
-                    .as_str();
-                match attr[1].to_ascii_lowercase().as_str() {
-                    "name" => name = Some(value),
-                    "content" => content = Some(value),
-                    _ => {}
-                }
-            }
-            if name != Some("blitz-fuzzy") {
-                return None;
-            }
-            let content = content.unwrap_or_default();
-            let parsed = CONTENT_RE.captures(content).and_then(|caps| {
-                Some(Self {
-                    threshold: caps[1].parse().ok()?,
-                    max_pixels: caps[2].parse().ok()?,
-                })
-            });
-            Some(parsed.unwrap_or_else(|| {
-                panic!(
-                    "invalid blitz-fuzzy content {content:?}: expected <threshold 0-255>;<pixels>"
-                )
-            }))
-        })
+        let content = blitz_meta(html, "blitz-fuzzy")?;
+        let parsed = CONTENT_RE.captures(content).and_then(|caps| {
+            Some(Self {
+                threshold: caps[1].parse().ok()?,
+                max_pixels: caps[2].parse().ok()?,
+            })
+        });
+        Some(parsed.unwrap_or_else(|| {
+            panic!("invalid blitz-fuzzy content {content:?}: expected <threshold 0-255>;<pixels>")
+        }))
     }
 
     pub fn matches(self, test_buffer: &[u8], ref_buffer: &[u8]) -> bool {

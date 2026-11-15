@@ -6,8 +6,12 @@
 //! - `tests/`, `resources/`, `fonts/`: copied from resvg
 //! - `fonts.conf`: loads only resvg's fonts, with resvg's generic families
 //! - `img/<path>.html`: `<img src=test.svg>` vs resvg's PNG (the usvg backend)
-//! - `inline/<path>.html`: the SVG inlined vs resvg's PNG (whichever inline
-//!   backend the runner uses; `BLITZ_NATIVE_SVG=1` for native)
+//! - `doc/<path>.html`: the SVG loaded as the top-level document vs resvg's PNG
+//!   (whichever inline backend the runner uses; `BLITZ_NATIVE_SVG=1` for
+//!   native). Unlike in an `<img>`, browsers load external resources there.
+//!   The test page is the PNG and its reference is the unmodified `.svg`,
+//!   rendered in a viewport the size of the PNG and at its scale, as resvg's
+//!   harness scales each SVG to 300px wide.
 //! - `parity/<path>.html`: the SVG inlined vs `<img src=test.svg>` (native vs
 //!   usvg on the same rasterizer, with `BLITZ_NATIVE_SVG=1`)
 //!
@@ -56,6 +60,8 @@ static ENCODING_RE: LazyLock<regex::bytes::Regex> =
     LazyLock::new(|| regex::bytes::Regex::new(r#"^\s*<\?xml[^>]*encoding="([^"]+)""#).unwrap());
 
 pub fn generate(resvg_dir: &Path, out_dir: &Path) {
+    // usvg warns about every missing font while sizing the tests
+    log::set_max_level(log::LevelFilter::Error);
     let src = resvg_dir.join("crates/resvg/tests");
     let dst = out_dir.join("resvg");
     if dst.exists() {
@@ -88,46 +94,67 @@ pub fn generate(resvg_dir: &Path, out_dir: &Path) {
         let png = tests_dir.join(format!("{rel}.png"));
         let rel = rel.as_str();
         let (width, height) = image::image_dimensions(&png).unwrap();
-        let svg_source = inlinable_svg(&decode_xml(&fs::read(&svg).unwrap()));
+        let svg_data = fs::read(&svg).unwrap();
+        let svg_source = inlinable_svg(&decode_xml(&svg_data));
+        // resvg's harness renders usvg's size scaled to the PNG's width
+        let tree = usvg::Tree::from_data(&svg_data, &usvg::Options::default()).unwrap();
+        let scale = width as f32 / tree.size().width();
 
         // Pages sit at the same depth as the SVG, so relative hrefs inside an
         // inlined SVG (../../../resources/...) resolve the same way.
         let up = "../".repeat(rel.matches('/').count() + 1);
-        let img_svg = format!(r#"<img src="{up}tests/{rel}.svg">"#);
+        let svg_href = format!("{up}tests/{rel}.svg");
+        let img_svg = format!(r#"<img src="{svg_href}">"#);
         let img_png = format!(r#"<img src="{up}tests/{rel}.png">"#);
+        let page_size = (width as f32, height as f32);
+        let doc_size = (width as f32 / scale, height as f32 / scale);
+        let doc_viewport =
+            format!(r#"<meta name="blitz-viewport" content="{width};{height};{scale}">"#);
         let modes = [
             (
                 "img",
                 img_svg.as_str(),
                 img_png.as_str(),
+                None,
                 png_fuzzy.as_str(),
+                page_size,
+                "",
             ),
             (
-                "inline",
-                svg_source.as_str(),
+                "doc",
                 img_png.as_str(),
+                "",
+                Some(svg_href.as_str()),
                 png_fuzzy.as_str(),
+                doc_size,
+                doc_viewport.as_str(),
             ),
             (
                 "parity",
                 svg_source.as_str(),
                 img_svg.as_str(),
+                None,
                 PARITY_FUZZY,
+                page_size,
+                "",
             ),
         ];
-        for (mode, test_body, ref_body, fuzzy) in modes {
+        for (mode, test_body, ref_body, ref_href, fuzzy, size, extra_head) in modes {
             let test_path = dst.join(mode).join(format!("{rel}.html"));
             let ref_path = dst.join(mode).join(format!("{rel}-ref.html"));
-            let ref_name = ref_path.file_name().unwrap().to_str().unwrap();
             fs::create_dir_all(test_path.parent().unwrap()).unwrap();
-            let fuzzy_meta = format!(r#"<meta name="blitz-fuzzy" content="{fuzzy}">"#);
-            let link = format!(
-                r#"<link rel="match" href="{}">"#,
-                encode_double_quoted_attribute(ref_name)
+            let ref_href = match ref_href {
+                Some(href) => href.to_string(),
+                None => {
+                    fs::write(&ref_path, page(rel, "", ref_body, size)).unwrap();
+                    ref_path.file_name().unwrap().to_str().unwrap().to_string()
+                }
+            };
+            let head = format!(
+                "<link rel=\"match\" href=\"{}\">\n<meta name=\"blitz-fuzzy\" content=\"{fuzzy}\">\n{extra_head}\n",
+                encode_double_quoted_attribute(&ref_href)
             );
-            let head = format!("{link}\n{fuzzy_meta}\n");
-            fs::write(&test_path, page(rel, &head, test_body, width, height)).unwrap();
-            fs::write(&ref_path, page(rel, "", ref_body, width, height)).unwrap();
+            fs::write(&test_path, page(rel, &head, test_body, size)).unwrap();
         }
         count += 1;
     }
@@ -197,7 +224,7 @@ pub fn summarize(expectations_path: &Path) {
     }
 }
 
-fn page(title: &str, head: &str, body: &str, width: u32, height: u32) -> String {
+fn page(title: &str, head: &str, body: &str, (width, height): (f32, f32)) -> String {
     format!(
         "<!DOCTYPE html>\n<meta charset=utf-8>\n<title>{}</title>\n{head}\
          <style>body {{ margin: 0 }} body > img, body > svg {{ display: block; width: {width}px; height: {height}px }}</style>\n\

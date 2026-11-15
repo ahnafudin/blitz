@@ -8,7 +8,8 @@ use std::path::Path;
 use std::time::Duration;
 use url::Url;
 
-use super::fuzzy::{ThresholdTolerance, fuzzy_buffer_diff};
+use super::fuzzy::{ThresholdTolerance, blitz_meta, fuzzy_buffer_diff};
+use blitz_traits::shell::{ColorScheme, Viewport};
 use blitz_vibey_script::ScriptDocument;
 use wpt_manifest::{FuzzySpec, tolerance_for_reference};
 
@@ -19,7 +20,53 @@ use super::{
 use crate::manifest::artifact_name;
 use crate::{BufferKind, HEIGHT, SubtestCounts, TestFlags, ThreadCtx, WIDTH};
 
+/// Renders the test and its references with the viewport from the test's
+/// `<meta name="blitz-viewport" content="<width>;<height>;<scale>">`, if any:
+/// a physical size in pixels and a device scale.
 pub fn process_ref_test(
+    ctx: &mut ThreadCtx,
+    test_relative_path: &str,
+    test_html: &str,
+    match_references: &[String],
+    mismatch_references: &[String],
+    fuzzy_specs: &[FuzzySpec],
+    flags: &mut TestFlags,
+) -> SubtestCounts {
+    let viewport = viewport_from_html(test_html).unwrap_or_else(|| ctx.viewport.clone());
+    let default_viewport = std::mem::replace(&mut ctx.viewport, viewport);
+    let counts = process_ref_test_in_viewport(
+        ctx,
+        test_relative_path,
+        test_html,
+        match_references,
+        mismatch_references,
+        fuzzy_specs,
+        flags,
+    );
+    ctx.viewport = default_viewport;
+    counts
+}
+
+/// Panics on a malformed `content`, like `ThresholdTolerance::from_html`.
+fn viewport_from_html(html: &str) -> Option<Viewport> {
+    let content = blitz_meta(html, "blitz-viewport")?;
+    let parsed = (|| {
+        let mut parts = content.split(';').map(str::trim);
+        let width: u32 = parts.next()?.parse().ok()?;
+        let height: u32 = parts.next()?.parse().ok()?;
+        let scale: f32 = parts.next()?.parse().ok()?;
+        let fits = width <= WIDTH && height <= HEIGHT && scale > 0.0;
+        (fits && parts.next().is_none())
+            .then(|| Viewport::new(width, height, scale, ColorScheme::Light))
+    })();
+    Some(parsed.unwrap_or_else(|| {
+        panic!(
+            "invalid blitz-viewport content {content:?}: expected <width <= {WIDTH}>;<height <= {HEIGHT}>;<scale>"
+        )
+    }))
+}
+
+fn process_ref_test_in_viewport(
     ctx: &mut ThreadCtx,
     test_relative_path: &str,
     test_html: &str,
@@ -355,6 +402,21 @@ mod tests {
             resolve_reference_url(&url, "about:blank").unwrap().as_str(),
             "about:blank"
         );
+    }
+
+    #[test]
+    fn blitz_viewport() {
+        let viewport =
+            viewport_from_html("<meta content='300;150;1.5' name=blitz-viewport>").unwrap();
+        assert_eq!(viewport.window_size, (300, 150));
+        assert_eq!(viewport.hidpi_scale, 1.5);
+        assert!(viewport_from_html("<p>").is_none());
+    }
+
+    #[test]
+    #[should_panic(expected = "invalid blitz-viewport content")]
+    fn blitz_viewport_too_large() {
+        viewport_from_html("<meta name=blitz-viewport content=900;300;1>");
     }
 
     #[test]

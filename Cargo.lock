@@ -10781,6 +10781,7 @@ dependencies = [
  "terminal-link",
  "thread_local",
  "url",
+ "usvg",
  "wpt_manifest",
  "wptreport",
 ]
