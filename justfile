@@ -21,10 +21,8 @@ wpt *ARGS:
 # resvg's test suite at wpt/RESVG_COMMIT, wrapped as reftests (see wpt/runner/src/resvg.rs).
 # Prefix with BLITZ_NATIVE_SVG=1 to render inline SVG with the native backend, and with
 # RESVG_PNG_FUZZY=<threshold>;<pixels> to compare against resvg's PNGs at another tolerance.
-resvg *ARGS="resvg":
-  cargo run --release --package wpt -- resvg-generate wpt/resvg/out
-  WPT_DIR=wpt/resvg/out WPT_OUTPUT_DIR="$PWD/wpt/resvg/output" cargo run --release --package wpt -- {{ARGS}}
-  WPT_OUTPUT_DIR="$PWD/wpt/resvg/output" cargo run --release --package wpt -- resvg-summary
+resvg *ARGS:
+  cargo run --release --package wpt -- resvg {{ARGS}}
 
 browser *ARGS:
   cargo run --release --package browser --features log-frame-times,log-phase-times {{ARGS}}

@@ -1,8 +1,11 @@
 //! resvg's test suite (`crates/resvg/tests`) wrapped as reftests: one SVG per
 //! feature with a reference PNG rendered by resvg.
 //!
-//! `wpt resvg-generate <out dir>` fetches resvg at `wpt/RESVG_COMMIT` into
-//! `wpt/resvg/checkout` (with the git CLI) and writes, under `<out dir>/resvg`:
+//! `wpt resvg [<paths>] [<runner flags>]` fetches resvg at `wpt/RESVG_COMMIT`
+//! into `wpt/resvg/checkout` (with the git CLI), generates the tests, runs the
+//! selected ones (all of `resvg/` by default) with `wpt/resvg/out` as the
+//! `WPT_DIR` and `wpt/resvg/output` as the output dir, and prints per-mode,
+//! per-directory pass counts. It writes, under `wpt/resvg/out/resvg`:
 //!
 //! - `tests/`, `resources/`, `fonts/`: copied from resvg
 //! - `img/<path>.html`: `<img src=test.svg>` vs resvg's PNG (the usvg backend)
@@ -15,9 +18,8 @@
 //! - `parity/<path>.html`: the SVG inlined vs `<img src=test.svg>` (native vs
 //!   usvg on the same rasterizer, with `BLITZ_NATIVE_SVG=1`)
 //!
-//! Run them with `WPT_DIR=<out dir>`, which also makes the runner render text
-//! with only resvg's fonts (see `font_context`), then `wpt resvg-summary` prints per-directory pass counts (`just resvg`
-//! does all of this, with results in `wpt/resvg/output` rather than `wpt/output`).
+//! Since `WPT_DIR` holds generated resvg tests, the runner renders text with
+//! only resvg's fonts (see `font_context`).
 
 use html_escape::{encode_double_quoted_attribute, encode_text};
 use parley::FontContext;
@@ -65,10 +67,16 @@ static PREFIXED_ROOT_RE: LazyLock<Regex> =
 static ENCODING_RE: LazyLock<regex::bytes::Regex> =
     LazyLock::new(|| regex::bytes::Regex::new(r#"^\s*<\?xml[^>]*encoding="([^"]+)""#).unwrap());
 
+/// Where the tests are generated: `wpt/resvg/out`
+pub fn wpt_dir() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).with_file_name("resvg/out")
+}
+
 pub fn generate(out_dir: &Path) {
     let commit = RESVG_COMMIT.trim();
     let resvg_dir = checkout(commit);
     // usvg warns about every missing font while sizing the tests
+    let max_level = log::max_level();
     log::set_max_level(log::LevelFilter::Error);
     let src = resvg_dir.join("crates/resvg/tests");
     let dst = out_dir.join("resvg");
@@ -156,6 +164,7 @@ pub fn generate(out_dir: &Path) {
         count += 1;
     }
     println!("Generated {count} tests in {}", dst.display());
+    log::set_max_level(max_level);
 }
 
 /// Prints per-mode, per-directory pass counts for the generated tests from a
@@ -264,7 +273,7 @@ fn decode_xml(data: &[u8]) -> String {
 
 /// Shallow-fetches `commit` into `wpt/resvg/checkout` unless it is already checked out.
 fn checkout(commit: &str) -> PathBuf {
-    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../resvg/checkout");
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).with_file_name("resvg/checkout");
     let head = Command::new("git")
         .arg("-C")
         .arg(&dir)

@@ -363,45 +363,50 @@ fn main() {
     env_logger::init();
     std::panic::set_hook(Box::new(panic_backtrace::stash_panic_handler));
 
-    let args: Vec<String> = env::args().collect();
-    match args.get(1).map(String::as_str) {
-        Some("resvg-generate") if args.len() == 3 => {
-            return resvg::generate(Path::new(&args[2]));
+    let mut args: Vec<String> = env::args().skip(1).collect();
+    if args.first().is_some_and(|arg| arg == "resvg") {
+        args.remove(0);
+        if renderer::parse_args(args.clone()).1.is_empty() {
+            args.push("resvg".to_string());
         }
-        Some("resvg-summary") => {
-            let default = output_dir().join("wpt_expectations.txt");
-            return resvg::summarize(args.get(2).map_or(&default, Path::new));
+        let wpt_dir = resvg::wpt_dir();
+        resvg::generate(&wpt_dir);
+        let out_dir = env::var_os("WPT_OUTPUT_DIR")
+            .map_or_else(|| wpt_dir.with_file_name("output"), PathBuf::from);
+        if run(&args, wpt_dir, out_dir.clone()) {
+            resvg::summarize(&out_dir.join("wpt_expectations.txt"));
         }
-        Some("resvg-generate") => {
-            eprintln!("usage: wpt resvg-generate <out dir>");
-            std::process::exit(1);
-        }
-        _ => {}
+        return;
     }
 
-    let verbose = env::args().any(|arg| arg == "--verbose" || arg == "-v");
-    let run_quarantined = env::args().any(|arg| arg == "--run-quarantined");
     let wpt_dir = path::absolute(env::var("WPT_DIR").expect("WPT_DIR is not set")).unwrap();
+    run(&args, wpt_dir, output_dir());
+}
+
+/// Runs the tests `args` select in `wpt_dir`, writing results to `out_dir`.
+/// Returns false if it only listed them (`--list`).
+fn run(args: &[String], wpt_dir: PathBuf, out_dir: PathBuf) -> bool {
+    let verbose = args.iter().any(|arg| arg == "--verbose" || arg == "-v");
+    let run_quarantined = args.iter().any(|arg| arg == "--run-quarantined");
     info!("WPT_DIR: {}", wpt_dir.display());
     if !wpt_dir.exists() {
         error!(
             "WPT_DIR does not exist. This should be set to a local copy of https://github.com/web-platform-tests/wpt."
         );
     }
-    let (renderer_kind, suites) = renderer::parse_args(env::args().skip(1));
+    let (renderer_kind, suites) = renderer::parse_args(args.iter().cloned());
     println!("Renderer: {}", renderer_kind.name());
     let test_paths = collect_tests(&wpt_dir, suites);
     let count = test_paths.len();
 
     // `--list` prints the selected test URLs without running them
-    if env::args().any(|arg| arg == "--list") {
+    if args.iter().any(|arg| arg == "--list") {
         for test in &test_paths {
             println!("{}", test.url);
         }
-        return;
+        return false;
     }
 
-    let out_dir = output_dir();
     if fs::exists(&out_dir).unwrap() {
         fs::remove_dir_all(&out_dir).unwrap();
     }
@@ -750,6 +755,7 @@ fn main() {
         report_path,
         write_report_start.elapsed().as_millis()
     );
+    true
 }
 
 #[cfg(test)]
