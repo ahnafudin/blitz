@@ -133,6 +133,15 @@ fn draw(scene: &mut impl PaintScene, document: &mut BaseDocument) {
         Default::default(),
         &Rect::new(0.0, 0.0, WIDTH as f64, HEIGHT as f64),
     );
-    let scale = document.viewport().scale_f64();
-    paint_scene(scene, document, scale, WIDTH, HEIGHT, 0, 0);
+    // Clip to the document's viewport, which `blitz-viewport` can make smaller than the buffer
+    let viewport = document.viewport();
+    let scale = viewport.scale_f64();
+    let (width, height) = viewport.window_size;
+    scene.push_clip_layer(
+        Fill::NonZero,
+        Default::default(),
+        &Rect::new(0.0, 0.0, width as f64, height as f64),
+    );
+    paint_scene(scene, document, scale, width, height, 0, 0);
+    scene.pop_layer();
 }
