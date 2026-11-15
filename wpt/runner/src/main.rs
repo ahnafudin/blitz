@@ -365,15 +365,15 @@ fn main() {
 
     let args: Vec<String> = env::args().collect();
     match args.get(1).map(String::as_str) {
-        Some("resvg-generate") if args.len() == 4 => {
-            return resvg::generate(Path::new(&args[2]), Path::new(&args[3]));
+        Some("resvg-generate") if args.len() == 3 => {
+            return resvg::generate(Path::new(&args[2]));
         }
         Some("resvg-summary") => {
             let default = output_dir().join("wpt_expectations.txt");
             return resvg::summarize(args.get(2).map_or(&default, Path::new));
         }
         Some("resvg-generate") => {
-            eprintln!("usage: wpt resvg-generate <resvg checkout> <out dir>");
+            eprintln!("usage: wpt resvg-generate <out dir>");
             std::process::exit(1);
         }
         _ => {}

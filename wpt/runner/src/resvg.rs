@@ -1,7 +1,8 @@
 //! resvg's test suite (`crates/resvg/tests`) wrapped as reftests: one SVG per
 //! feature with a reference PNG rendered by resvg.
 //!
-//! `wpt resvg-generate <resvg checkout> <out dir>` writes, under `<out dir>/resvg`:
+//! `wpt resvg-generate <out dir>` fetches resvg at `wpt/RESVG_COMMIT` into
+//! `wpt/resvg/checkout` (with the git CLI) and writes, under `<out dir>/resvg`:
 //!
 //! - `tests/`, `resources/`, `fonts/`: copied from resvg
 //! - `img/<path>.html`: `<img src=test.svg>` vs resvg's PNG (the usvg backend)
@@ -25,7 +26,11 @@ use regex::Regex;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 use std::sync::{Arc, LazyLock};
+
+const RESVG_REPO: &str = "https://github.com/linebender/resvg";
+const RESVG_COMMIT: &str = include_str!("../../RESVG_COMMIT");
 
 /// File in the generated `WPT_DIR` holding the resvg commit the tests came from
 pub const REVISION_FILE: &str = "REVISION";
@@ -60,7 +65,9 @@ static PREFIXED_ROOT_RE: LazyLock<Regex> =
 static ENCODING_RE: LazyLock<regex::bytes::Regex> =
     LazyLock::new(|| regex::bytes::Regex::new(r#"^\s*<\?xml[^>]*encoding="([^"]+)""#).unwrap());
 
-pub fn generate(resvg_dir: &Path, out_dir: &Path) {
+pub fn generate(out_dir: &Path) {
+    let commit = RESVG_COMMIT.trim();
+    let resvg_dir = checkout(commit);
     // usvg warns about every missing font while sizing the tests
     log::set_max_level(log::LevelFilter::Error);
     let src = resvg_dir.join("crates/resvg/tests");
@@ -71,17 +78,7 @@ pub fn generate(resvg_dir: &Path, out_dir: &Path) {
     fs::create_dir_all(out_dir).unwrap();
     let png_fuzzy = std::env::var("RESVG_PNG_FUZZY").unwrap_or_else(|_| PNG_FUZZY.to_string());
     // The run's report records this as the revision of the tests
-    let revision = std::process::Command::new("git")
-        .current_dir(resvg_dir)
-        .args(["rev-parse", "HEAD"])
-        .output()
-        .ok()
-        .filter(|output| output.status.success())
-        .map(|output| output.stdout);
-    match revision {
-        Some(revision) => fs::write(out_dir.join(REVISION_FILE), revision).unwrap(),
-        None => _ = fs::remove_file(out_dir.join(REVISION_FILE)),
-    }
+    fs::write(out_dir.join(REVISION_FILE), commit).unwrap();
     for name in ["tests", "resources", "fonts"] {
         copy_dir(&src.join(name), &dst.join(name));
     }
@@ -263,6 +260,40 @@ fn decode_xml(data: &[u8]) -> String {
         .and_then(|caps| encoding_rs::Encoding::for_label(&caps[1]))
         .unwrap_or(encoding_rs::UTF_8);
     encoding.decode_without_bom_handling(data).0.into_owned()
+}
+
+/// Shallow-fetches `commit` into `wpt/resvg/checkout` unless it is already checked out.
+fn checkout(commit: &str) -> PathBuf {
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../resvg/checkout");
+    let head = Command::new("git")
+        .arg("-C")
+        .arg(&dir)
+        .args(["rev-parse", "HEAD"])
+        .output()
+        .ok()
+        .filter(|output| output.status.success())
+        .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_string());
+    if head.as_deref() != Some(commit) {
+        println!("Fetching resvg {commit}");
+        fs::create_dir_all(&dir).unwrap();
+        git(&dir, &["init", "-q"]);
+        git(&dir, &["fetch", "-q", "--depth", "1", RESVG_REPO, commit]);
+        git(&dir, &["checkout", "-q", "FETCH_HEAD"]);
+    }
+    dir
+}
+
+fn git(dir: &Path, args: &[&str]) {
+    let status = Command::new("git")
+        .arg("-C")
+        .arg(dir)
+        .args(args)
+        .status()
+        .unwrap_or_else(|err| panic!("failed to run git: {err}"));
+    if !status.success() {
+        eprintln!("git {} failed in {}", args.join(" "), dir.display());
+        std::process::exit(1);
+    }
 }
 
 /// When `wpt_dir` holds generated resvg tests, the fonts to render them with:
