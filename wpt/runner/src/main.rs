@@ -434,7 +434,7 @@ fn main() {
     let num = AtomicU32::new(0);
     let completed_num = AtomicU32::new(0);
 
-    let base_font_context = parley::FontContext::default();
+    let base_font_context = resvg::font_context(&wpt_dir).unwrap_or_default();
 
     let thread_state: ThreadLocal<RefCell<ThreadCtx>> = ThreadLocal::new();
     let worker_counter = AtomicUsize::new(0);

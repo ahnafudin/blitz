@@ -40,15 +40,29 @@ pub fn decode_font_bytes(bytes: &[u8]) -> Cow<'_, [u8]> {
 }
 
 #[cfg(feature = "svg")]
-use std::sync::{Arc, LazyLock};
+use std::sync::{Arc, OnceLock};
 #[cfg(feature = "svg")]
 use usvg::fontdb;
 #[cfg(feature = "svg")]
-pub(crate) static FONT_DB: LazyLock<Arc<fontdb::Database>> = LazyLock::new(|| {
-    let mut db = fontdb::Database::new();
-    db.load_system_fonts();
-    Arc::new(db)
-});
+static FONT_DB: OnceLock<Arc<fontdb::Database>> = OnceLock::new();
+
+/// Sets the fonts SVG images are rendered with, instead of the system fonts.
+/// Only takes effect before the first SVG image is parsed; returns `db` back
+/// otherwise.
+#[cfg(feature = "svg")]
+pub fn set_svg_font_db(db: Arc<fontdb::Database>) -> Result<(), Arc<fontdb::Database>> {
+    FONT_DB.set(db)
+}
+
+#[cfg(feature = "svg")]
+fn svg_font_db() -> Arc<fontdb::Database> {
+    let db = FONT_DB.get_or_init(|| {
+        let mut db = fontdb::Database::new();
+        db.load_system_fonts();
+        Arc::new(db)
+    });
+    Arc::clone(db)
+}
 
 /// Which kind of CSS image layer list (`background-image` or `mask-image`) to
 /// flush from style to dedicated storage on the node.
@@ -157,7 +171,7 @@ pub fn walk_tree(indent: usize, node: &Node) {
 #[cfg(feature = "svg")]
 pub(crate) fn parse_svg_image(source: &[u8]) -> Result<crate::node::SvgImageData, usvg::Error> {
     let options = usvg::Options {
-        fontdb: Arc::clone(&*FONT_DB),
+        fontdb: svg_font_db(),
         ..Default::default()
     };
     crate::node::SvgImageData::from_data(source, &options)

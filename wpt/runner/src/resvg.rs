@@ -4,7 +4,6 @@
 //! `wpt resvg-generate <resvg checkout> <out dir>` writes, under `<out dir>/resvg`:
 //!
 //! - `tests/`, `resources/`, `fonts/`: copied from resvg
-//! - `fonts.conf`: loads only resvg's fonts, with resvg's generic families
 //! - `img/<path>.html`: `<img src=test.svg>` vs resvg's PNG (the usvg backend)
 //! - `doc/<path>.html`: the SVG loaded as the top-level document vs resvg's PNG
 //!   (whichever inline backend the runner uses; `BLITZ_NATIVE_SVG=1` for
@@ -15,16 +14,18 @@
 //! - `parity/<path>.html`: the SVG inlined vs `<img src=test.svg>` (native vs
 //!   usvg on the same rasterizer, with `BLITZ_NATIVE_SVG=1`)
 //!
-//! Run them with `WPT_DIR=<out dir>` and `FONTCONFIG_FILE=<out dir>/resvg/fonts.conf`,
-//! then `wpt resvg-summary` prints per-directory pass counts (`just resvg`
+//! Run them with `WPT_DIR=<out dir>`, which also makes the runner render text
+//! with only resvg's fonts (see `font_context`), then `wpt resvg-summary` prints per-directory pass counts (`just resvg`
 //! does all of this, with results in `wpt/resvg/output` rather than `wpt/output`).
 
 use html_escape::{encode_double_quoted_attribute, encode_text};
+use parley::FontContext;
+use parley::fontique::{Blob, Collection, CollectionOptions, GenericFamily, SourceCache};
 use regex::Regex;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fs;
-use std::path::Path;
-use std::sync::LazyLock;
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, LazyLock};
 
 /// File in the generated `WPT_DIR` holding the resvg commit the tests came from
 pub const REVISION_FILE: &str = "REVISION";
@@ -40,12 +41,12 @@ const PNG_FUZZY: &str = "64;100";
 const PARITY_FUZZY: &str = "16;90";
 
 /// Matches `GLOBAL_FONTDB` in resvg's `crates/resvg/tests/integration/main.rs`.
-const FONT_FAMILIES: &[(&str, &str)] = &[
-    ("serif", "Noto Serif"),
-    ("sans-serif", "Noto Sans"),
-    ("cursive", "Yellowtail"),
-    ("fantasy", "Sedgwick Ave Display"),
-    ("monospace", "Noto Mono"),
+const FONT_FAMILIES: &[(GenericFamily, &str)] = &[
+    (GenericFamily::Serif, "Noto Serif"),
+    (GenericFamily::SansSerif, "Noto Sans"),
+    (GenericFamily::Cursive, "Yellowtail"),
+    (GenericFamily::Fantasy, "Sedgwick Ave Display"),
+    (GenericFamily::Monospace, "Noto Mono"),
 ];
 
 static PROLOG_RE: LazyLock<Regex> = LazyLock::new(|| {
@@ -84,7 +85,6 @@ pub fn generate(resvg_dir: &Path, out_dir: &Path) {
     for name in ["tests", "resources", "fonts"] {
         copy_dir(&src.join(name), &dst.join(name));
     }
-    write_fonts_conf(&dst);
 
     let tests_dir = dst.join("tests");
     let list = fs::read_to_string(src.join("integration/render.rs")).unwrap();
@@ -265,23 +265,59 @@ fn decode_xml(data: &[u8]) -> String {
     encoding.decode_without_bom_handling(data).0.into_owned()
 }
 
-fn write_fonts_conf(dst: &Path) {
-    let fonts_dir = std::path::absolute(dst.join("fonts")).unwrap();
-    let fonts_dir = encode_text(fonts_dir.to_str().unwrap());
-    let aliases: String = FONT_FAMILIES
-        .iter()
-        .map(|(generic, family)| {
-            format!("  <alias><family>{generic}</family><prefer><family>{family}</family></prefer></alias>\n")
+/// When `wpt_dir` holds generated resvg tests, the fonts to render them with:
+/// only resvg's `tests/fonts`, with the generic families resvg's harness uses,
+/// for both Blitz's text (returned) and SVG images (usvg). System fonts are
+/// left out so results don't depend on the machine.
+pub fn font_context(wpt_dir: &Path) -> Option<FontContext> {
+    let fonts_dir = wpt_dir.join("resvg/fonts");
+    let mut font_paths: Vec<PathBuf> = fs::read_dir(&fonts_dir)
+        .ok()?
+        .map(|entry| entry.unwrap().path())
+        .filter(|path| {
+            path.extension()
+                .and_then(|ext| ext.to_str())
+                .is_some_and(|ext| {
+                    matches!(
+                        ext.to_ascii_lowercase().as_str(),
+                        "ttf" | "ttc" | "otf" | "otc"
+                    )
+                })
         })
         .collect();
-    fs::write(
-        dst.join("fonts.conf"),
-        format!(
-            "<?xml version=\"1.0\"?>\n<!DOCTYPE fontconfig SYSTEM \"fonts.dtd\">\n<fontconfig>\n  \
-             <dir>{fonts_dir}</dir>\n  <cachedir>{fonts_dir}-cache</cachedir>\n{aliases}</fontconfig>\n"
-        ),
-    )
-    .unwrap();
+    font_paths.sort();
+
+    let mut font_ctx = FontContext {
+        collection: Collection::new(CollectionOptions {
+            shared: false,
+            system_fonts: false,
+        }),
+        source_cache: SourceCache::default(),
+    };
+    let mut font_db = usvg::fontdb::Database::new();
+    for path in &font_paths {
+        let data = fs::read(path).unwrap();
+        font_ctx
+            .collection
+            .register_fonts(Blob::new(Arc::new(data.clone())), None);
+        font_db.load_font_data(data);
+    }
+    for &(generic, family) in FONT_FAMILIES {
+        let id = font_ctx.collection.family_id(family).unwrap();
+        font_ctx
+            .collection
+            .set_generic_families(generic, std::iter::once(id));
+        match generic {
+            GenericFamily::Serif => font_db.set_serif_family(family),
+            GenericFamily::SansSerif => font_db.set_sans_serif_family(family),
+            GenericFamily::Cursive => font_db.set_cursive_family(family),
+            GenericFamily::Fantasy => font_db.set_fantasy_family(family),
+            _ => font_db.set_monospace_family(family),
+        }
+    }
+    blitz_dom::util::set_svg_font_db(Arc::new(font_db))
+        .expect("SVG fonts are set before any SVG is parsed");
+    Some(font_ctx)
 }
 
 /// Copies a directory tree, replacing `#` in file names with `_` because the
