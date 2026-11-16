@@ -231,7 +231,9 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
         };
 
         if let Some(bg_color) = background_color
-            && !root_element.data.is_element_with_tag_name(&local_name!("svg"))
+            && !root_element
+                .data
+                .is_element_with_tag_name(&local_name!("svg"))
         {
             let bg_color = bg_color.as_srgb_color();
             let rect = Rect::from_origin_size(
