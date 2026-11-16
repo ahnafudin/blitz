@@ -230,7 +230,9 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
             }
         };
 
-        if let Some(bg_color) = background_color {
+        if let Some(bg_color) = background_color
+            && !root_element.data.is_element_with_tag_name(&local_name!("svg"))
+        {
             let bg_color = bg_color.as_srgb_color();
             let rect = Rect::from_origin_size(
                 (self.initial_x, self.initial_y),
@@ -681,7 +683,12 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
                     backdrop_filter,
                     |scene| {
                         if paints_own_box {
-                            cx.draw_background(scene);
+                            // usvg paints the root SVG background as part of its image.
+                            if self.root_element_id != Some(node.id)
+                                || !node.data.is_element_with_tag_name(&local_name!("svg"))
+                            {
+                                cx.draw_background(scene);
+                            }
                             cx.draw_inset_box_shadow(scene);
                         }
                         cx.draw_table_row_backgrounds(scene);
