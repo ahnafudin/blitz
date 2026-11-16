@@ -230,10 +230,25 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
             }
         };
 
+        let root_svg_paints_background = root_element
+            .data
+            .is_element_with_tag_name(&local_name!("svg"))
+            && {
+                #[cfg(feature = "svg")]
+                {
+                    root_element
+                        .element_data()
+                        .and_then(|element| element.svg_data())
+                        .is_some()
+                }
+                #[cfg(not(feature = "svg"))]
+                {
+                    false
+                }
+            };
+
         if let Some(bg_color) = background_color
-            && !root_element
-                .data
-                .is_element_with_tag_name(&local_name!("svg"))
+            && !root_svg_paints_background
         {
             let bg_color = bg_color.as_srgb_color();
             let rect = Rect::from_origin_size(
