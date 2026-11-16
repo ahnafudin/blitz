@@ -4,6 +4,9 @@ use std::sync::Arc;
 
 use usvg::roxmltree;
 
+#[cfg(feature = "ahcut")]
+use super::svg_refusals::{SvgExternalImage, SvgRefusals};
+
 /// Dimensions declared on the root `<svg>` element, before any resolution.
 ///
 /// Unlike [`usvg::Tree::size`], which always produces a concrete size, this
@@ -80,6 +83,14 @@ pub struct SvgImageData {
     pub tree: Arc<usvg::Tree>,
     /// The dimensions declared on the root `<svg>` element.
     pub intrinsic_dimensions: SvgIntrinsicDimensions,
+    /// The first text element (`text`, `tspan`, `textPath` or `tref`) of the document or, when it has none,
+    /// of an SVG it embeds through an `<image>` element.
+    #[cfg(feature = "ahcut")]
+    pub text_element: Option<&'static str>,
+    /// The first `<image>` or `<feImage>` of the document, or of an SVG it embeds, whose source is not a
+    /// `data:` URL. usvg would hand it to its path resolver; the `ahcut` resolver refuses it without reading.
+    #[cfg(feature = "ahcut")]
+    pub external_image: Option<SvgExternalImage>,
 }
 
 impl SvgImageData {
@@ -107,10 +118,28 @@ impl SvgImageData {
         let doc = roxmltree::Document::parse_with_options(text, xml_options)
             .map_err(usvg::Error::ParsingFailed)?;
         let tree = usvg::Tree::from_xmltree(&doc, options)?;
+        #[cfg(feature = "ahcut")]
+        let refusals = SvgRefusals::of(&doc);
         Ok(Self {
             tree: Arc::new(tree),
             intrinsic_dimensions: SvgIntrinsicDimensions::from_xmltree(&doc),
+            #[cfg(feature = "ahcut")]
+            text_element: refusals.text_element,
+            #[cfg(feature = "ahcut")]
+            external_image: refusals.external_image,
         })
+    }
+
+    pub(crate) fn user_to_tree_transform(&self) -> usvg::Transform {
+        match self.intrinsic_dimensions.view_box {
+            Some(view_box) => view_box_transform(
+                view_box,
+                self.intrinsic_dimensions.preserve_aspect_ratio,
+                self.tree.size().width(),
+                self.tree.size().height(),
+            ),
+            None => usvg::Transform::identity(),
+        }
     }
 
     /// The intrinsic width in CSS px, present only when the root `<svg>`

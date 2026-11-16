@@ -1344,6 +1344,9 @@ impl<'doc> DocumentMutator<'doc> {
     }
 
     fn load_linked_stylesheet(&mut self, target_id: NodeId) {
+        if self.doc.refuse_frozen_font_stylesheet_mutation() {
+            return;
+        }
         let node = &self.doc.nodes[target_id];
 
         let mut is_in_head = false;
@@ -1382,6 +1385,12 @@ impl<'doc> DocumentMutator<'doc> {
                 guard: self.doc.guard.clone(),
                 net_provider: self.doc.net_provider.clone(),
                 abort_signal: self.doc.abort_signal.clone(),
+                font_loads: self.doc.font_loads.clone(),
+                font_stylesheets: self.doc.font_stylesheets.clone(),
+                _pending: self
+                    .doc
+                    .font_stylesheets
+                    .pending(self.doc.shell_provider.clone()),
             },
         );
 
@@ -1399,6 +1408,10 @@ impl<'doc> DocumentMutator<'doc> {
     }
 
     fn unload_stylesheet(&mut self, node_id: NodeId) {
+        if self.doc.refuse_frozen_font_stylesheet_mutation() {
+            return;
+        }
+        self.doc.retire_font_faces_for_node(node_id);
         let node = &mut self.doc.nodes[node_id];
         let Some(element) = node.element_data_mut() else {
             unreachable!();
@@ -1420,6 +1433,8 @@ impl<'doc> DocumentMutator<'doc> {
             .force_stylesheet_origins_dirty(OriginSet::all());
 
         self.doc.nodes_to_stylesheet.remove(&node_id);
+        #[cfg(feature = "ahcut")]
+        self.doc.filter_author_sources.remove(&node_id);
         self.doc.stylesheet_generation += 1;
     }
 

@@ -9,6 +9,7 @@
 pub(crate) mod document;
 pub(crate) mod element;
 pub(crate) mod event;
+mod font_mutations;
 pub(crate) mod hyperlink;
 pub(crate) mod node;
 pub(crate) mod selection;
@@ -220,10 +221,19 @@ pub(crate) fn define_method(
     body: NativeFnPtr,
     context: &mut Context,
 ) {
-    let function = FunctionObjectBuilder::new(context.realm(), NativeFunction::from_fn_ptr(body))
-        .name(JsString::from(name))
-        .length(length)
-        .build();
+    let guard = font_mutations::kind(name, false);
+    let function = FunctionObjectBuilder::new(
+        context.realm(),
+        NativeFunction::from_copy_closure(move |this, args, context| {
+            let args = font_mutations::preflight(guard, this, args, context)?;
+            let result = body(this, &args, context)?;
+            font_mutations::valid(context)?;
+            Ok(result)
+        }),
+    )
+    .name(JsString::from(name))
+    .length(length)
+    .build();
     obj.define_property_or_throw(
         PropertyKey::from(JsString::from(name)),
         PropertyDescriptor::builder()
@@ -251,11 +261,20 @@ pub(crate) fn define_accessor(
             .length(0)
             .build()
     });
+    let guard = font_mutations::kind(name, true);
     let setter = setter.map(|s| {
-        FunctionObjectBuilder::new(context.realm(), NativeFunction::from_fn_ptr(s))
-            .name(JsString::from(format!("set {name}")))
-            .length(1)
-            .build()
+        FunctionObjectBuilder::new(
+            context.realm(),
+            NativeFunction::from_copy_closure(move |this, args, context| {
+                let args = font_mutations::preflight(guard, this, args, context)?;
+                let result = s(this, &args, context)?;
+                font_mutations::valid(context)?;
+                Ok(result)
+            }),
+        )
+        .name(JsString::from(format!("set {name}")))
+        .length(1)
+        .build()
     });
     let mut builder = PropertyDescriptor::builder()
         .enumerable(false)

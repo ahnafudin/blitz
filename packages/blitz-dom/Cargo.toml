@@ -23,6 +23,9 @@ default = [
 custom-widget = ["dep:anyrender", "accessibility"]
 tracing = ["dep:tracing"]
 svg = ["dep:usvg", "dep:svgtypes"]
+# Opt-in behaviour for an embedder that renders through a checked path: SVG filters resolved with style sheet
+# provenance, SVG text and non-`data:` SVG image sources detected and not loaded, CSSOM colour-space carry.
+ahcut = ["svg", "dep:anyrender", "anyrender/ahcut", "style/ahcut"]
 # WOFF decoding (using the "wuff" crate which is pure Rust)
 woff = ["dep:wuff"]
 accessibility = ["accesskit"]

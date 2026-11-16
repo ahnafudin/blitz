@@ -165,6 +165,7 @@ impl BaseDocument {
         self.subdoc_is_animating = subdoc_is_animating;
         timer.record_time("subdocs");
 
+        self.finish_font_layout();
         timer.print_times(&format!("Resolve({}): ", self.id()));
     }
 

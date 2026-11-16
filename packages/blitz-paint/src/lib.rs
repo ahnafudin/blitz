@@ -78,6 +78,70 @@ pub fn paint_scene(
     // );
 }
 
+/// Paint like [`paint_scene`], but refuse instead of drawing approximately: every URL filter must resolve to a
+/// supported SVG Gaussian chain, whose author style sheets have known provenance; SVG text and SVG images that are
+/// not `data:` URLs are refused; resources must be loaded and the document must not hold subdocuments. An error
+/// means nothing that was pushed into `scene` may be shown.
+#[cfg(feature = "ahcut")]
+pub fn try_paint_scene(
+    scene: &mut impl PaintScene,
+    doc: &mut BaseDocument,
+    scale: f64,
+    width: u32,
+    height: u32,
+    x_offset: u32,
+    y_offset: u32,
+) -> Result<(), anyrender::filters::FilterError> {
+    use anyrender::filters::FilterError;
+    if !scale.is_finite() || scale <= 0.0 || width == 0 || height == 0 {
+        return Err(FilterError::Invalid("paint viewport or scale"));
+    }
+    if doc.has_pending_critical_resources() {
+        return Err(FilterError::Invalid("paint resources not ready"));
+    }
+    if doc.tree().iter().any(|(_, node)| {
+        node.element_data()
+            .is_some_and(|e| &*e.name.local == "iframe")
+    }) {
+        return Err(FilterError::Unsupported("subdocument paint"));
+    }
+    // Replacing an author sheet can remove every URL filter without any filter being resolved, so the document
+    // is admitted before any widget or paint work.
+    doc.validate_filter_stylesheet_provenance()?;
+    // SVG text is shaped from usvg's font database, which a build without system fonts leaves empty.
+    if doc.first_svg_text().is_some() {
+        return Err(FilterError::Unsupported(
+            "SVG text is not drawn: <text>, <tspan>, <textPath> and <tref> are refused",
+        ));
+    }
+    // usvg did not load it (the resolver opens nothing).
+    if doc.first_svg_external_image().is_some() {
+        return Err(FilterError::Unsupported(
+            "SVG image source: an image inside SVG may come only from a data: URL",
+        ));
+    }
+
+    #[allow(unused_mut)]
+    let mut custom_widget_scenes: CustomWidgetSceneMap = HashMap::new();
+    #[cfg(feature = "custom-widget")]
+    build_custom_widget_scenes(&mut custom_widget_scenes, doc, scene, scale);
+
+    let mut generator = BlitzDomPainter::new(
+        doc,
+        scale,
+        width,
+        height,
+        x_offset as f64,
+        y_offset as f64,
+        &custom_widget_scenes,
+    );
+    generator.checked_filters = true;
+    generator.paint_scene(scene);
+    match generator.filter_error.borrow_mut().take() {
+        Some(error) => Err(error),
+        None => Ok(()),
+    }
+}
 #[cfg(feature = "custom-widget")]
 fn build_custom_widget_scenes(
     custom_widget_scenes: &mut CustomWidgetSceneMap,

@@ -21,6 +21,8 @@ apple-font-embolden = []
 # drag/hover interaction in blitz-dom (off by default while the feature
 # matures).
 scrollbars = ["blitz-dom/scrollbars"]
+# Opt-in checked painting (`try_paint_scene`): URL filters resolved to SVG Gaussian chains, refusals as errors.
+ahcut = ["svg", "blitz-dom/ahcut", "anyrender/ahcut"]
 
 [dependencies]
 # Blitz dependencies

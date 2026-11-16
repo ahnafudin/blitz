@@ -45,7 +45,13 @@ use std::sync::{Arc, LazyLock};
 use usvg::fontdb;
 #[cfg(feature = "svg")]
 pub(crate) static FONT_DB: LazyLock<Arc<fontdb::Database>> = LazyLock::new(|| {
+    #[cfg_attr(
+        all(feature = "ahcut", not(feature = "system-fonts")),
+        allow(unused_mut)
+    )]
     let mut db = fontdb::Database::new();
+    // With `ahcut`, a build without `system-fonts` reads no font of the machine here either.
+    #[cfg(any(feature = "system-fonts", not(feature = "ahcut")))]
     db.load_system_fonts();
     Arc::new(db)
 });
@@ -156,13 +162,61 @@ pub fn walk_tree(indent: usize, node: &Node) {
 /// Parse an SVG image.
 #[cfg(feature = "svg")]
 pub(crate) fn parse_svg_image(source: &[u8]) -> Result<crate::node::SvgImageData, usvg::Error> {
-    let options = usvg::Options {
-        fontdb: Arc::clone(&*FONT_DB),
-        ..Default::default()
-    };
-    crate::node::SvgImageData::from_data(source, &options)
+    #[cfg(feature = "ahcut")]
+    {
+        parse_svg_image_refusing_external(source)
+    }
+    #[cfg(not(feature = "ahcut"))]
+    {
+        let options = usvg::Options {
+            fontdb: Arc::clone(&*FONT_DB),
+            ..Default::default()
+        };
+        crate::node::SvgImageData::from_data(source, &options)
+    }
 }
 
+/// [`parse_svg_image`] for a checked render. usvg loads an image that an `<image>` or `<feImage>` names through
+/// these two resolvers. A `data:` URL is decoded from memory; an SVG in it is looked at for text and for image
+/// sources of its own before usvg parses it, and usvg forwards the `data:` URLs of a nested SVG here too. Any
+/// other source is a path or URL that usvg would read from disk: it is recorded and never opened.
+#[cfg(feature = "ahcut")]
+fn parse_svg_image_refusing_external(
+    source: &[u8],
+) -> Result<crate::node::SvgImageData, usvg::Error> {
+    let embedded = std::sync::Mutex::new(crate::node::SvgRefusals::default());
+    let default_data = usvg::ImageHrefResolver::default_data_resolver();
+    let options = usvg::Options {
+        fontdb: Arc::clone(&*FONT_DB),
+        image_href_resolver: usvg::ImageHrefResolver {
+            resolve_data: Box::new(|mime: &str, data: Arc<Vec<u8>>, options: &usvg::Options| {
+                // The two types usvg tries as SVG.
+                if matches!(mime, "image/svg+xml" | "text/plain")
+                    && let Some(found) = crate::node::SvgRefusals::of_bytes(&data)
+                {
+                    embedded.lock().unwrap().merge(found);
+                }
+                default_data(mime, data, options)
+            }),
+            resolve_string: Box::new(|href: &str, _: &usvg::Options| {
+                embedded
+                    .lock()
+                    .unwrap()
+                    .merge(crate::node::SvgRefusals::external(href));
+                None
+            }),
+        },
+        ..Default::default()
+    };
+    let mut svg = crate::node::SvgImageData::from_data(source, &options)?;
+    drop(options);
+    let embedded = embedded.into_inner().unwrap();
+    svg.text_element = svg.text_element.or(embedded.text_element);
+    if svg.external_image.is_none() {
+        svg.external_image = embedded.external_image;
+    }
+    Ok(svg)
+}
 pub trait ToColorColor {
     /// Converts a color into the `AlphaColor<Srgb>` type from the `color` crate
     fn as_color_color(&self) -> Color;

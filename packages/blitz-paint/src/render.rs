@@ -2,6 +2,8 @@ mod background;
 mod border;
 mod box_shadow;
 mod clip_path;
+#[cfg(feature = "ahcut")]
+mod filter_effects;
 mod form_controls;
 mod mask;
 
@@ -130,6 +132,12 @@ pub struct BlitzDomPainter<'dom, 'a> {
     #[cfg(feature = "scrollbars")]
     pub(crate) scrollbar_drag_target: Option<blitz_dom::node::ScrollbarRef>,
     pub(crate) layer_manager: LayerManager,
+    /// The first refusal of a checked paint.
+    #[cfg(feature = "ahcut")]
+    pub(crate) filter_error: RefCell<Option<anyrender::filters::FilterError>>,
+    /// Set by `try_paint_scene`.
+    #[cfg(feature = "ahcut")]
+    pub(crate) checked_filters: bool,
     /// Reusable scratch allocations shared by all text layouts painted for this document.
     pub(crate) draw_text_context: RefCell<DrawTextContext>,
     /// Cached selection ranges for O(1) lookup: node_id -> (start_offset, end_offset)
@@ -172,6 +180,10 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
             #[cfg(feature = "scrollbars")]
             scrollbar_drag_target: dom.scrollbar_drag_target(),
             layer_manager,
+            #[cfg(feature = "ahcut")]
+            filter_error: RefCell::new(None),
+            #[cfg(feature = "ahcut")]
+            checked_filters: false,
             draw_text_context: RefCell::new(DrawTextContext::default()),
             selection_ranges,
             custom_widget_scenes,
@@ -482,10 +494,16 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
         // Cull elements that fall entirely outside the current clip rectangle. In addition to
         // the viewport, `clip_rect` is narrowed by any ancestor scrollport (see below), so this
         // also culls elements scrolled out of view inside a clipping/scrolling container.
-        if screen_bbox.x1 < clip_rect.x0
-            || screen_bbox.x0 > clip_rect.x1
-            || screen_bbox.y1 < clip_rect.y0
-            || screen_bbox.y0 > clip_rect.y1
+        // A checked paint resolves the filter of every box, even off-screen, so that no refusal is skipped.
+        #[cfg(feature = "ahcut")]
+        let may_cull = !self.checked_filters || effects.filter.0.is_empty();
+        #[cfg(not(feature = "ahcut"))]
+        let may_cull = true;
+        if may_cull
+            && (screen_bbox.x1 < clip_rect.x0
+                || screen_bbox.x0 > clip_rect.x1
+                || screen_bbox.y1 < clip_rect.y0
+                || screen_bbox.y0 > clip_rect.y1)
         {
             return;
         }
@@ -610,6 +628,17 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
 
                 let filter = convert_filters(&effects.filter.0).map(Arc::new);
                 let backdrop_filter = convert_filters(&effects.backdrop_filter.0).map(Arc::new);
+                #[cfg(feature = "ahcut")]
+                let (filter, backdrop_filter) = if self.checked_filters {
+                    self.resolve_checked_filters(
+                        node_id,
+                        cx.frame.border_box_path().bounding_box(),
+                        &effects.filter.0,
+                        &effects.backdrop_filter.0,
+                    )
+                } else {
+                    (filter, backdrop_filter)
+                };
 
                 // Adjust effect layer clip by filter expansion area
                 //
@@ -629,6 +658,12 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
                 effect_layer_clip.y0 += filter_expansion_area.y0;
                 effect_layer_clip.x1 += filter_expansion_area.x1;
                 effect_layer_clip.y1 += filter_expansion_area.y1;
+
+                // A resolved SVG filter crops its output to its filter region.
+                #[cfg(feature = "ahcut")]
+                if let Some(region) = filter.as_ref().and_then(|f| f.output_region()) {
+                    effect_layer_clip = region;
+                }
 
                 // Opacity/Filter layer if box has opacity or a filter.
                 // Clipped to border-box as it needs to include the background and borders.

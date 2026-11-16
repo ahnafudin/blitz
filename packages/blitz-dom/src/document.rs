@@ -329,6 +329,9 @@ pub struct BaseDocument {
     // Parley contexts
     /// A Parley font context
     pub(crate) font_ctx: Arc<Mutex<parley::FontContext>>,
+    pub(crate) font_loads: crate::FontFaceLoads,
+    pub(crate) font_stylesheets: Arc<crate::FontStylesheetState>,
+    pub(crate) retired_font_loads: HashSet<usize>,
     #[cfg(feature = "parallel-construct")]
     /// Thread-and-document-local copies to the font context
     pub(crate) thread_font_contexts: ThreadLocal<RefCell<Box<FontContext>>>,
@@ -386,6 +389,9 @@ pub struct BaseDocument {
     pub(crate) nodes_to_id: HashMap<String, SmallVec<[NodeId; 1]>>,
     /// Map of `<style>` and `<link>` node IDs to their associated stylesheet
     pub(crate) nodes_to_stylesheet: BTreeMap<NodeId, DocumentStyleSheet>,
+    #[cfg(feature = "ahcut")]
+    pub(crate) filter_author_sources:
+        HashMap<NodeId, crate::filter_stylesheets::EmbeddedFilterSheet>,
     /// Incremented whenever `nodes_to_stylesheet` changes (a stylesheet is
     /// added, replaced or removed), so that CSSOM wrappers can detect that
     /// their cached rule data is stale.
@@ -527,6 +533,7 @@ impl BaseDocument {
 
         let (tx, rx) = channel();
 
+        let font_loads: crate::FontFaceLoads = Default::default();
         let mut doc = Self {
             id,
             tx,
@@ -548,8 +555,13 @@ impl BaseDocument {
             devtool_settings: DevtoolSettings::default(),
             url: base_url,
             nodes_to_stylesheet: BTreeMap::new(),
+            #[cfg(feature = "ahcut")]
+            filter_author_sources: HashMap::new(),
             stylesheet_generation: 0,
             font_ctx,
+            font_stylesheets: Arc::new(crate::FontStylesheetState::new(font_loads.clone())),
+            font_loads,
+            retired_font_loads: HashSet::new(),
             #[cfg(feature = "parallel-construct")]
             thread_font_contexts: ThreadLocal::new(),
             layout_ctx: parley::LayoutContext::new(),
@@ -1216,6 +1228,9 @@ impl BaseDocument {
     }
 
     pub fn reload_resource_by_href(&mut self, href_to_reload: &str) {
+        if self.refuse_frozen_font_stylesheet_mutation() {
+            return;
+        }
         for &node_id in self.nodes_to_stylesheet.keys() {
             let node = &self.nodes[node_id];
             let Some(element) = node.element_data() else {
@@ -1241,6 +1256,11 @@ impl BaseDocument {
                                     guard: self.guard.clone(),
                                     net_provider: self.net_provider.clone(),
                                     abort_signal: self.abort_signal.clone(),
+                                    font_loads: self.font_loads.clone(),
+                                    _pending: self
+                                        .font_stylesheets
+                                        .pending(self.shell_provider.clone()),
+                                    font_stylesheets: self.font_stylesheets.clone(),
                                 },
                             ),
                         );
@@ -1251,9 +1271,14 @@ impl BaseDocument {
     }
 
     pub fn process_style_element(&mut self, target_id: NodeId) {
+        if self.refuse_frozen_font_stylesheet_mutation() {
+            return;
+        }
         let css = self.nodes[target_id].text_content();
         let css = html_escape::decode_html_entities(&css);
-        let sheet = self.make_stylesheet(&css, Origin::Author);
+        let sheet = self.make_stylesheet_with_owner(&css, Origin::Author, Some(target_id));
+        #[cfg(feature = "ahcut")]
+        self.remember_embedded_filter_sheet(target_id, &sheet, &css);
         self.add_stylesheet_for_node(sheet, target_id);
     }
 
@@ -1290,6 +1315,15 @@ impl BaseDocument {
     }
 
     pub fn make_stylesheet(&self, css: impl AsRef<str>, origin: Origin) -> DocumentStyleSheet {
+        self.make_stylesheet_with_owner(css, origin, None)
+    }
+
+    fn make_stylesheet_with_owner(
+        &self,
+        css: impl AsRef<str>,
+        origin: Origin,
+        owner: Option<NodeId>,
+    ) -> DocumentStyleSheet {
         let data = Stylesheet::from_str(
             css.as_ref(),
             self.url.url_extra_data(),
@@ -1302,6 +1336,9 @@ impl BaseDocument {
                 net_provider: self.net_provider.clone(),
                 shell_provider: self.shell_provider.clone(),
                 abort_signal: self.abort_signal.clone(),
+                font_loads: self.font_loads.clone(),
+                font_stylesheets: self.font_stylesheets.clone(),
+                owner,
                 import_depth: 0,
             }),
             None,
@@ -1313,16 +1350,38 @@ impl BaseDocument {
     }
 
     pub fn upsert_stylesheet_for_node(&mut self, node_id: NodeId) {
+        if self.refuse_frozen_font_stylesheet_mutation() {
+            return;
+        }
         let raw_styles = self.nodes[node_id].text_content();
-        let sheet = self.make_stylesheet(raw_styles, Origin::Author);
+        let sheet = self.make_stylesheet_with_owner(&raw_styles, Origin::Author, Some(node_id));
+        #[cfg(feature = "ahcut")]
+        self.remember_embedded_filter_sheet(node_id, &sheet, &raw_styles);
         self.add_stylesheet_for_node(sheet, node_id);
     }
 
     pub fn add_stylesheet_for_node(&mut self, stylesheet: DocumentStyleSheet, node_id: NodeId) {
+        if self.refuse_frozen_font_stylesheet_mutation() {
+            return;
+        }
+        self.apply_initial_stylesheet_for_node(stylesheet, node_id);
+    }
+
+    fn apply_initial_stylesheet_for_node(
+        &mut self,
+        stylesheet: DocumentStyleSheet,
+        node_id: NodeId,
+    ) {
+        if self.nodes_to_stylesheet.contains_key(&node_id)
+            && self.refuse_frozen_font_stylesheet_mutation()
+        {
+            return;
+        }
         let old = self.nodes_to_stylesheet.insert(node_id, stylesheet.clone());
         self.stylesheet_generation += 1;
 
         if let Some(old) = old {
+            self.retire_font_faces_for_node(node_id);
             self.stylist.remove_stylesheet(old, &self.guard.read())
         }
 
@@ -1336,6 +1395,7 @@ impl BaseDocument {
             &self.shell_provider,
             &self.guard.read(),
             self.abort_signal.as_ref(),
+            &self.font_loads,
         );
 
         // Store data on element
@@ -1387,11 +1447,20 @@ impl BaseDocument {
     }
 
     pub fn load_resource(&mut self, res: ResourceLoadResponse) {
+        if !self.font_stylesheets_valid() {
+            return;
+        }
         self.pending_critical_resources.remove(&res.request_id);
+        if self.retired_font_loads.remove(&res.request_id) {
+            return;
+        }
 
         let resource = match res.result {
             Ok(resource) => resource,
             Err(err) => {
+                if let Some(face) = self.font_loads.lock().unwrap().get_mut(&res.request_id) {
+                    face.status = crate::FontFaceLoadStatus::Error;
+                }
                 if let Some(url) = res.resolved_url.as_ref() {
                     let waiting_nodes = self.pending_images.remove(url).unwrap_or_default();
                     #[cfg(feature = "tracing")]
@@ -1414,9 +1483,10 @@ impl BaseDocument {
         };
 
         match resource {
+            Resource::DeferredStylesheet(parse) => parse.run(),
             Resource::Css(css) => {
                 let node_id = res.node_id.unwrap();
-                self.add_stylesheet_for_node(css, node_id);
+                self.apply_initial_stylesheet_for_node(css, node_id);
             }
             Resource::ImportedCss(import_rule, sheet) => {
                 let mut guard = self.guard.write();
@@ -1471,9 +1541,16 @@ impl BaseDocument {
 
                 // TODO: Investigate eliminating double-box
                 let mut global_font_ctx = self.font_ctx.lock().unwrap();
-                global_font_ctx
+                let registered = global_font_ctx
                     .collection
                     .register_fonts(font.clone(), Some(info_override));
+                if let Some(face) = self.font_loads.lock().unwrap().get_mut(&res.request_id) {
+                    face.status = if registered.is_empty() {
+                        crate::FontFaceLoadStatus::Error
+                    } else {
+                        crate::FontFaceLoadStatus::Registered
+                    };
+                }
 
                 #[cfg(feature = "parallel-construct")]
                 {

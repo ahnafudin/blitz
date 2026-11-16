@@ -44,7 +44,14 @@ mod config;
 mod cssom;
 mod debug;
 mod events;
+#[cfg(feature = "ahcut")]
+mod filter_stylesheets;
+mod font_loading;
 mod font_metrics;
+pub use font_loading::{
+    FontFaceLoad, FontFaceLoadStatus, FontFaceLoads, FontLoadingSnapshot, FontStylesheetState,
+    UnregisteredFontFamily,
+};
 mod form;
 mod html;
 /// Loading of `<iframe>` elements into sub-documents.
@@ -65,6 +72,13 @@ mod stylo_device;
 mod stylo_to_cursor_icon;
 mod stylo_to_kurbo;
 mod stylo_to_parley;
+#[cfg(feature = "ahcut")]
+pub mod svg_filters;
+#[cfg(feature = "ahcut")]
+mod svg_text;
+#[cfg(feature = "ahcut")]
+pub use svg_text::{SvgImageUse, SvgTextPlace, SvgTextUse};
+mod svg_geometry;
 pub mod traversal;
 /// Versioned storage for the nodes of the DOM tree.
 mod tree;
@@ -158,4 +172,39 @@ pub fn build_single_font_ctx(font_data: &[u8]) -> FontContext {
             .append_generic_families(generic, family_ids.iter().copied());
     }
     ctx
+}
+
+/// A [`FontContext`] for documents that must not depend on the machine's fonts: system-font discovery is off,
+/// and the supplied font, registered under `family`, is the font of every generic family. Text that names no
+/// family of its own, or only generic ones, is therefore shaped by this one font. WOFF/WOFF2 inputs are decoded.
+/// `None` when the data holds no font.
+pub fn build_default_face_font_ctx(font_data: &[u8], family: &str) -> Option<FontContext> {
+    use parley::fontique::{
+        Blob, Collection, CollectionOptions, FontInfoOverride, GenericFamily, SourceCache,
+    };
+    use std::sync::Arc;
+
+    let mut ctx = FontContext {
+        source_cache: SourceCache::new_shared(),
+        collection: Collection::new(CollectionOptions {
+            shared: false,
+            system_fonts: false,
+        }),
+    };
+    let decoded = decode_font_bytes(font_data).into_owned();
+    let registered = ctx.collection.register_fonts(
+        Blob::new(Arc::new(decoded) as _),
+        Some(FontInfoOverride {
+            family_name: Some(family),
+            ..Default::default()
+        }),
+    );
+    if registered.is_empty() {
+        return None;
+    }
+    for generic in GenericFamily::all() {
+        ctx.collection
+            .set_generic_families(*generic, registered.iter().map(|(id, _)| *id));
+    }
+    Some(ctx)
 }

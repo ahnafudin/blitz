@@ -23,7 +23,23 @@ impl ScriptRuntime {
         if due.is_empty() {
             return false;
         }
-        for timer in due {
+        let animation_timestamp = {
+            let state = self.ctx.state.borrow();
+            state
+                .clock
+                .now()
+                .saturating_duration_since(
+                    state
+                        .animation_time_origin
+                        .expect("runtime clock origin initialised"),
+                )
+                .as_secs_f64()
+                * 1000.0
+        };
+        for mut timer in due {
+            if timer.animation_frame {
+                timer.args = vec![JsValue::from(animation_timestamp)];
+            }
             if let Err(error) =
                 timer
                     .callback
@@ -108,17 +124,10 @@ pub(super) fn request_animation_frame(
     else {
         return Ok(JsValue::from(0));
     };
-    // Approximate the next frame as ~16ms away
-    let timestamp = JsValue::from(16.0);
+    // Keep the scheduling cadence separate from the timestamp observed at delivery.
     let mut state = ctx.state.borrow_mut();
     let now = state.clock.now();
-    let id = state.timers.add(
-        now,
-        Duration::from_millis(16),
-        None,
-        callback,
-        vec![timestamp],
-    );
+    let id = state.timers.add_animation_frame(now, callback);
     Ok(JsValue::from(id as f64))
 }
 

@@ -10,6 +10,8 @@ mod serialize;
 mod stylo_data;
 #[cfg(feature = "svg")]
 mod svg;
+#[cfg(feature = "ahcut")]
+mod svg_refusals;
 mod text;
 
 pub use attributes::{Attribute, Attributes};
@@ -28,4 +30,8 @@ pub use scrollbar::{ScrollbarColor, ScrollbarRef, ScrollbarWidth};
 pub use stylo_data::ComputedStyleRef;
 #[cfg(feature = "svg")]
 pub use svg::{SvgImageData, SvgIntrinsicDimensions};
+#[cfg(feature = "ahcut")]
+pub use svg_refusals::SvgExternalImage;
+#[cfg(feature = "ahcut")]
+pub(crate) use svg_refusals::SvgRefusals;
 pub use text::{GeneratedTextInputEvent, TextBrush, TextInputData, TextLayout};

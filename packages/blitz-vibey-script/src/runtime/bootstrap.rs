@@ -118,6 +118,8 @@ pub(super) fn register_globals(ctx: &DomCtx, base_url: Option<&Url>, context: &m
         css::css_property_supported,
     );
 
+    register_global_fn(context, "__blitz_font_snapshot", 1, super::fonts::snapshot);
+
     // `getComputedStyle`
     register_global_fn(context, "getComputedStyle", 1, css::get_computed_style);
     register_global_fn(

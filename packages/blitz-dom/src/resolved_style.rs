@@ -159,6 +159,13 @@ pub fn resolved_style_property_names() -> &'static [&'static str] {
     })
 }
 
+#[cfg(feature = "ahcut")]
+mod filter_color_space;
+#[cfg(feature = "ahcut")]
+use filter_color_space::{
+    FILTER_COLOR_SPACE, carried_value, filter_color_space_declaration, with_filter_color_space,
+};
+
 impl BaseDocument {
     /// Check whether `value` is a valid value for the CSS property `property`.
     /// Used by CSSOM APIs (`element.style.setProperty` and friends), which must
@@ -197,6 +204,21 @@ impl BaseDocument {
     /// The canonical CSSOM serialization of a `style` attribute string
     /// (`CSSStyleDeclaration.cssText` getter).
     pub fn style_attr_serialize(&self, style_attr: &str) -> String {
+        #[cfg(feature = "ahcut")]
+        {
+            with_filter_color_space(
+                self.serialize_style_attr_block(style_attr),
+                filter_color_space_declaration(style_attr),
+            )
+        }
+        #[cfg(not(feature = "ahcut"))]
+        {
+            self.serialize_style_attr_block(style_attr)
+        }
+    }
+
+    /// The declarations of a `style` attribute that Stylo knows, serialized.
+    fn serialize_style_attr_block(&self, style_attr: &str) -> String {
         let block = self.parse_style_attr_block(style_attr);
         let mut css = CssStringWriter::new();
         let _ = block.to_css(&mut css);
@@ -207,6 +229,12 @@ impl BaseDocument {
     /// string (`CSSStyleDeclaration.getPropertyValue()`). Handles shorthands.
     /// Returns an empty string if the property is not set or not recognised.
     pub fn style_attr_get_property(&self, style_attr: &str, property: &str) -> String {
+        #[cfg(feature = "ahcut")]
+        if property.eq_ignore_ascii_case(FILTER_COLOR_SPACE) {
+            return filter_color_space_declaration(style_attr)
+                .map(|(value, _)| value)
+                .unwrap_or_default();
+        }
         let Ok(property_id) = PropertyId::parse_enabled_for_all_content(property) else {
             return String::new();
         };
@@ -229,6 +257,21 @@ impl BaseDocument {
         value: &str,
         important: bool,
     ) -> Option<String> {
+        #[cfg(feature = "ahcut")]
+        if property.eq_ignore_ascii_case(FILTER_COLOR_SPACE) {
+            let css = self.serialize_style_attr_block(style_attr);
+            if value.trim().is_empty() {
+                return Some(css);
+            }
+            // A keyword, or a value with var() or env() kept unresolved. Anything else, and a priority written
+            // into the value, is invalid and leaves the style unchanged, per CSSOM.
+            let (value, false) = carried_value(value)? else {
+                return None;
+            };
+            return Some(with_filter_color_space(css, Some((value, important))));
+        }
+        #[cfg(feature = "ahcut")]
+        let carried = filter_color_space_declaration(style_attr);
         let property_id = PropertyId::parse_enabled_for_all_content(property).ok()?;
         let mut block = self.parse_style_attr_block(style_attr);
 
@@ -260,6 +303,8 @@ impl BaseDocument {
 
         let mut css = CssStringWriter::new();
         let _ = block.to_css(&mut css);
+        #[cfg(feature = "ahcut")]
+        let css = with_filter_color_space(css, carried);
         Some(css)
     }
 
@@ -274,6 +319,13 @@ impl BaseDocument {
         style_attr: &str,
         property: &str,
     ) -> Option<(String, String)> {
+        #[cfg(feature = "ahcut")]
+        let carried = filter_color_space_declaration(style_attr);
+        #[cfg(feature = "ahcut")]
+        if property.eq_ignore_ascii_case(FILTER_COLOR_SPACE) {
+            let removed = carried.map(|(value, _)| value).unwrap_or_default();
+            return Some((self.serialize_style_attr_block(style_attr), removed));
+        }
         let property_id = PropertyId::parse_enabled_for_all_content(property).ok()?;
         let mut block = self.parse_style_attr_block(style_attr);
 
@@ -285,6 +337,8 @@ impl BaseDocument {
 
         let mut css = CssStringWriter::new();
         let _ = block.to_css(&mut css);
+        #[cfg(feature = "ahcut")]
+        let css = with_filter_color_space(css, carried);
         Some((css, removed_value))
     }
 

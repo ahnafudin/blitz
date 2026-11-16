@@ -12,6 +12,7 @@ use blitz_traits::events::{DomEvent, UiEvent};
 use url::Url;
 use web_time::Instant;
 
+use crate::clock::ScriptClock;
 use crate::event_handler::ScriptEventHandler;
 use crate::fetch::{DefaultScriptFetcher, FetchError, ScriptFetcher, document_may_load};
 use crate::runtime::ScriptRuntime;
@@ -52,7 +53,27 @@ impl ScriptDocument {
     /// Note: this does *not* execute any scripts yet. Call
     /// [`execute_scripts`](Self::execute_scripts) to do so (or rely on the
     /// first `poll` doing it automatically).
-    pub fn from_html(html: &str, mut config: DocumentConfig) -> Self {
+    pub fn from_html(html: &str, config: DocumentConfig) -> Self {
+        Self::from_html_with_clock(html, config, ScriptClock::default())
+    }
+
+    /// Parse with an explicit Unix epoch in milliseconds, chosen by the embedder.
+    ///
+    /// The stopped clock is injected before Boa and bootstrap construction, so
+    /// the first project script observes exactly this epoch. Negative epochs are
+    /// valid within ECMAScript Date's inclusive +/-8.64e15ms range. Invalid input
+    /// is refused before document construction. No production epoch is selected.
+    /// This constructor disables the real-time timer thread; drive time manually.
+    pub fn from_html_with_virtual_epoch(
+        html: &str,
+        config: DocumentConfig,
+        epoch_millis: i64,
+    ) -> Result<Self, &'static str> {
+        let clock = ScriptClock::virtual_at_epoch(epoch_millis)?;
+        Ok(Self::from_html_with_clock(html, config, clock).without_timer_thread())
+    }
+
+    fn from_html_with_clock(html: &str, mut config: DocumentConfig, clock: ScriptClock) -> Self {
         if config.html_parser_provider.is_none() {
             config.html_parser_provider = Some(Arc::new(HtmlProvider));
         }
@@ -62,7 +83,7 @@ impl ScriptDocument {
         DocumentHtmlParser::parse_into_mutator(&mut mutr, html);
         drop(mutr);
 
-        Self::from_base_document(doc)
+        Self::from_base_document_with_clock(doc, clock)
     }
 
     /// Wrap an already-parsed [`BaseDocument`] in a [`ScriptDocument`] without
@@ -75,6 +96,23 @@ impl ScriptDocument {
     /// an HTML parser provider (e.g. `blitz_html::HtmlProvider`) set in its
     /// [`DocumentConfig`].
     pub fn from_base_document(doc: BaseDocument) -> Self {
+        Self::from_base_document_with_clock(doc, ScriptClock::default())
+    }
+
+    /// Wrap an already parsed document with the same explicit-epoch guarantee
+    /// as [`from_html_with_virtual_epoch`](Self::from_html_with_virtual_epoch).
+    /// The embedder must rebuild, rather than rewind a live document, for seeks
+    /// requiring earlier state. The timer thread is disabled for this constructor.
+    pub fn from_base_document_with_virtual_epoch(
+        doc: BaseDocument,
+        epoch_millis: i64,
+    ) -> Result<Self, &'static str> {
+        let clock = ScriptClock::virtual_at_epoch(epoch_millis)?;
+        Ok(Self::from_base_document_with_clock(doc, clock).without_timer_thread())
+    }
+
+    fn from_base_document_with_clock(doc: BaseDocument, clock: ScriptClock) -> Self {
+        doc.freeze_font_stylesheets();
         // The default base url (set when `DocumentConfig.base_url` is `None`) is a
         // meaningless data url. Treat it as "no base url".
         let base_url = Some(doc.base_url().clone()).filter(|url| url.scheme() != "data");
@@ -82,7 +120,12 @@ impl ScriptDocument {
         let inner = Rc::new(RefCell::new(doc));
         let fetcher: Rc<RefCell<Box<dyn ScriptFetcher>>> =
             Rc::new(RefCell::new(Box::new(DefaultScriptFetcher)));
-        let runtime = ScriptRuntime::new(Rc::clone(&inner), base_url.as_ref(), Rc::clone(&fetcher));
+        let runtime = ScriptRuntime::new(
+            Rc::clone(&inner),
+            base_url.as_ref(),
+            Rc::clone(&fetcher),
+            clock,
+        );
 
         Self {
             inner,
@@ -118,6 +161,9 @@ impl ScriptDocument {
     /// ordering without wall-clock waiting. Should be combined with
     /// [`without_timer_thread`](Self::without_timer_thread) (the timer thread
     /// sleeps in real time).
+    /// This legacy switch retains Boa's previously captured wall-time epoch.
+    /// For reproducible Date origins, construct with
+    /// [`from_html_with_virtual_epoch`](Self::from_html_with_virtual_epoch).
     pub fn with_virtual_time(self) -> Self {
         self.runtime.ctx.state.borrow().clock.make_virtual();
         self
@@ -130,8 +176,21 @@ impl ScriptDocument {
 
     /// Advance a virtual clock to `deadline` (never backwards). Does nothing
     /// unless [`with_virtual_time`](Self::with_virtual_time) was used.
+    /// An explicit-epoch constructor also enables this method. If the requested
+    /// advance exceeds Date's range, it is refused and recorded in
+    /// [`take_js_errors`](Self::take_js_errors); the clock does not change.
+    /// Use [`try_advance_clock_to`](Self::try_advance_clock_to) to receive the error.
     pub fn advance_clock_to(&mut self, deadline: Instant) {
-        self.runtime.ctx.state.borrow().clock.advance_to(deadline);
+        if let Err(error) = self.try_advance_clock_to(deadline) {
+            self.record_error(error.to_string());
+        }
+    }
+
+    /// Checked forward advance. Earlier deadlines do not rewind a live clock.
+    /// Explicit epochs refuse overflow/out-of-range Date values atomically.
+    /// The legacy `advance_clock_to` reports the same refusal in JS diagnostics.
+    pub fn try_advance_clock_to(&mut self, deadline: Instant) -> Result<(), &'static str> {
+        self.runtime.ctx.state.borrow().clock.advance_to(deadline)
     }
 
     /// Override the [`ScriptFetcher`] used to load external (`src="..."`) scripts
@@ -441,6 +500,10 @@ impl Document for ScriptDocument {
         }
 
         ran |= self.runtime.run_due_timers();
+        if self.runtime.poll_font_loads() {
+            self.runtime.run_jobs("font completion microtasks");
+            ran = true;
+        }
         self.arm_timer_thread();
         ran
     }

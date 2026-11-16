@@ -11,6 +11,7 @@ pub(crate) struct Timer {
     pub interval: Option<Duration>,
     pub callback: JsObject,
     pub args: Vec<JsValue>,
+    pub animation_frame: bool,
 }
 
 #[derive(Default)]
@@ -36,12 +37,19 @@ impl TimerQueue {
             interval,
             callback,
             args,
+            animation_frame: false,
         });
         id
     }
 
     pub fn remove(&mut self, id: u64) {
         self.timers.retain(|timer| timer.id != id);
+    }
+
+    pub fn add_animation_frame(&mut self, now: Instant, callback: JsObject) -> u64 {
+        let id = self.add(now, Duration::from_millis(16), None, callback, Vec::new());
+        self.timers.last_mut().unwrap().animation_frame = true;
+        id
     }
 
     /// The deadline of the timer which is due soonest (if any)
@@ -71,11 +79,12 @@ impl TimerQueue {
                     interval: timer.interval,
                     callback: timer.callback.clone(),
                     args: timer.args.clone(),
+                    animation_frame: timer.animation_frame,
                 });
             }
         }
 
-        due.sort_by_key(|timer| timer.deadline);
+        due.sort_by_key(|timer| (timer.deadline, timer.id));
         due
     }
 }

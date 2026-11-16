@@ -3,7 +3,7 @@ use selectors::context::QuirksMode;
 use std::sync::atomic::Ordering as Ao;
 use std::{
     io::Cursor,
-    sync::{Arc, atomic::AtomicUsize, mpsc::Sender},
+    sync::{Arc, Mutex, atomic::AtomicUsize, mpsc::Sender},
 };
 use style::{
     font_face::{
@@ -56,8 +56,26 @@ pub struct FontFaceOverrides {
     pub style: Option<parley::fontique::FontStyle>,
 }
 
+/// A network callback may enqueue parsing, but only the document thread runs it.
+#[derive(Clone)]
+pub struct DeferredStylesheet(Arc<Mutex<Option<Box<dyn FnOnce() + Send>>>>);
+impl std::fmt::Debug for DeferredStylesheet {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("DeferredStylesheet")
+    }
+}
+impl DeferredStylesheet {
+    pub(crate) fn run(&self) {
+        let parse = self.0.lock().unwrap().take();
+        if let Some(parse) = parse {
+            parse();
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub enum Resource {
+    DeferredStylesheet(DeferredStylesheet),
     Image(ImageType, u32, u32, Arc<Vec<u8>>),
     #[cfg(feature = "svg")]
     Svg(ImageType, crate::node::SvgImageData),
@@ -115,6 +133,26 @@ impl<T: Send + Sync + 'static> ResourceHandler<T> {
         self.request_id
     }
 
+    fn defer_stylesheet_response(
+        self: Box<Self>,
+        url: String,
+        bytes: Bytes,
+        parse: fn(Box<Self>, String, Bytes),
+    ) {
+        let tx = self.tx.clone();
+        let shell = self.shell_provider.clone();
+        let response = ResourceLoadResponse {
+            request_id: self.request_id,
+            node_id: self.node_id,
+            resolved_url: Some(url.clone()),
+            result: Ok(Resource::DeferredStylesheet(DeferredStylesheet(Arc::new(
+                Mutex::new(Some(Box::new(move || parse(self, url, bytes)))),
+            )))),
+        };
+        let _ = tx.send(DocumentEvent::ResourceLoad(response));
+        shell.request_redraw();
+    }
+
     fn respond(&self, resolved_url: String, result: Result<Resource, String>) {
         let response = ResourceLoadResponse {
             request_id: self.request_id,
@@ -140,6 +178,9 @@ pub struct StylesheetHandler {
     pub guard: SharedRwLock,
     pub net_provider: Arc<dyn NetProvider>,
     pub abort_signal: Option<AbortSignal>,
+    pub font_loads: crate::FontFaceLoads,
+    pub(crate) font_stylesheets: Arc<crate::FontStylesheetState>,
+    pub(crate) _pending: crate::font_loading::PendingStylesheet,
 }
 
 impl NetHandler for ResourceHandler<StylesheetHandler> {
@@ -148,9 +189,18 @@ impl NetHandler for ResourceHandler<StylesheetHandler> {
     }
 
     fn bytes(self: Box<Self>, resolved_url: String, bytes: Bytes) {
+        self.defer_stylesheet_response(resolved_url, bytes, Self::parse_stylesheet);
+    }
+}
+
+impl ResourceHandler<StylesheetHandler> {
+    fn parse_stylesheet(self: Box<Self>, resolved_url: String, bytes: Bytes) {
         // NOTE(Nico): I don't *think* external stylesheets should have HTML entities escaped
         // let escaped_css = html_escape::decode_html_entities(css);
 
+        if !self.data.font_stylesheets.active() {
+            return;
+        }
         let sheet = Stylesheet::from_bytes(
             &bytes,
             self.data.source_url.clone().into(),
@@ -165,6 +215,9 @@ impl NetHandler for ResourceHandler<StylesheetHandler> {
                 net_provider: self.data.net_provider.clone(),
                 shell_provider: self.shell_provider.clone(),
                 abort_signal: self.data.abort_signal.clone(),
+                font_loads: self.data.font_loads.clone(),
+                font_stylesheets: self.data.font_stylesheets.clone(),
+                owner: self.node_id,
                 import_depth: 0,
             }),
             None, // error_reporter
@@ -191,6 +244,9 @@ pub(crate) struct StylesheetLoader {
     pub(crate) net_provider: Arc<dyn NetProvider>,
     pub(crate) shell_provider: Arc<dyn ShellProvider>,
     pub(crate) abort_signal: Option<AbortSignal>,
+    pub(crate) font_loads: crate::FontFaceLoads,
+    pub(crate) font_stylesheets: Arc<crate::FontStylesheetState>,
+    pub(crate) owner: Option<NodeId>,
     /// Depth of `@import` nesting for the stylesheet this loader is parsing
     /// (0 for a top-level stylesheet)
     pub(crate) import_depth: usize,
@@ -205,7 +261,10 @@ impl ServoStylesheetLoader for StylesheetLoader {
         supports: Option<ImportSupportsCondition>,
         layer: ImportLayer,
     ) -> ServoArc<Locked<ImportRule>> {
-        if self.import_depth >= MAX_IMPORT_DEPTH || !supports.as_ref().is_none_or(|s| s.enabled) {
+        if !self.font_stylesheets.active()
+            || self.import_depth >= MAX_IMPORT_DEPTH
+            || !supports.as_ref().is_none_or(|s| s.enabled)
+        {
             return ServoArc::new(lock.wrap(ImportRule {
                 url,
                 stylesheet: ImportSheet::new_refused(),
@@ -231,9 +290,10 @@ impl ServoStylesheetLoader for StylesheetLoader {
             ResourceHandler::boxed(
                 self.tx.clone(),
                 self.doc_id,
-                None, // node_id
+                self.owner,
                 self.shell_provider.clone(),
                 NestedStylesheetHandler {
+                    _pending: self.font_stylesheets.pending(self.shell_provider.clone()),
                     url: url.clone(),
                     loader: StylesheetLoader {
                         import_depth: self.import_depth + 1,
@@ -252,6 +312,7 @@ impl ServoStylesheetLoader for StylesheetLoader {
 }
 
 struct NestedStylesheetHandler {
+    _pending: crate::font_loading::PendingStylesheet,
     loader: StylesheetLoader,
     lock: SharedRwLock,
     url: ServoArc<Url>,
@@ -262,9 +323,18 @@ struct NestedStylesheetHandler {
 
 impl NetHandler for ResourceHandler<NestedStylesheetHandler> {
     fn bytes(self: Box<Self>, resolved_url: String, bytes: Bytes) {
+        self.defer_stylesheet_response(resolved_url, bytes, Self::parse_stylesheet);
+    }
+}
+
+impl ResourceHandler<NestedStylesheetHandler> {
+    fn parse_stylesheet(self: Box<Self>, resolved_url: String, bytes: Bytes) {
         // NOTE(Nico): I don't *think* external stylesheets should have HTML entities escaped
         // let escaped_css = html_escape::decode_html_entities(css);
 
+        if !self.data.loader.font_stylesheets.active() {
+            return;
+        }
         let sheet = ServoArc::new(Stylesheet::from_bytes(
             &bytes,
             UrlExtraData(self.data.url.clone()),
@@ -288,6 +358,7 @@ impl NetHandler for ResourceHandler<NestedStylesheetHandler> {
             &self.shell_provider,
             &self.data.lock.read(),
             self.data.loader.abort_signal.as_ref(),
+            &self.data.loader.font_loads,
         );
 
         let import_rule = self.data.import_rule.clone();
@@ -300,6 +371,9 @@ struct FontFaceHandler {
     overrides: FontFaceOverrides,
 }
 impl NetHandler for ResourceHandler<FontFaceHandler> {
+    fn error(self: Box<Self>, url: String, error: String) {
+        self.respond(url, Err(error));
+    }
     fn bytes(mut self: Box<Self>, resolved_url: String, bytes: Bytes) {
         let result = self.data.parse(bytes);
         self.respond(resolved_url, result)
@@ -340,34 +414,23 @@ impl FontFaceHandler {
                 #[cfg(feature = "tracing")]
                 tracing::info!("Decompressing woff1 font");
 
-                // Use wuff crate to decompress font
-                let decompressed = wuff::decompress_woff1(&bytes).ok();
-
-                if let Some(decompressed) = decompressed {
-                    bytes = Bytes::from(decompressed);
-                } else {
-                    #[cfg(feature = "tracing")]
-                    tracing::warn!("Failed to decompress woff1 font");
-                }
+                bytes = Bytes::from(
+                    wuff::decompress_woff1(&bytes)
+                        .map_err(|_| "WOFF decoding failed".to_owned())?,
+                );
             }
             #[cfg(feature = "woff")]
             FontFaceSourceFormatKeyword::Woff2 => {
                 #[cfg(feature = "tracing")]
                 tracing::info!("Decompressing woff2 font");
 
-                // Use wuff crate to decompress font
-                let decompressed = wuff::decompress_woff2(&bytes).ok();
-
-                if let Some(decompressed) = decompressed {
-                    bytes = Bytes::from(decompressed);
-                } else {
-                    #[cfg(feature = "tracing")]
-                    tracing::warn!("Failed to decompress woff2 font");
-                }
+                bytes = Bytes::from(
+                    wuff::decompress_woff2(&bytes)
+                        .map_err(|_| "WOFF2 decoding failed".to_owned())?,
+                );
             }
             FontFaceSourceFormatKeyword::None => {
-                // Should this be an error?
-                return Ok(Resource::None);
+                return Err("Unrecognized font format".into());
             }
             _ => {}
         }
@@ -387,6 +450,7 @@ pub(crate) fn fetch_font_face(
     shell_provider: &Arc<dyn ShellProvider>,
     read_guard: &SharedRwLockReadGuard,
     abort_signal: Option<&AbortSignal>,
+    font_loads: &crate::FontFaceLoads,
 ) {
     fetch_font_face_rules(
         sheet.contents(read_guard).rules(read_guard).iter(),
@@ -397,6 +461,7 @@ pub(crate) fn fetch_font_face(
         shell_provider,
         read_guard,
         abort_signal,
+        font_loads,
     )
 }
 
@@ -411,6 +476,7 @@ pub(crate) fn fetch_font_face_rules<'a>(
     shell_provider: &Arc<dyn ShellProvider>,
     read_guard: &SharedRwLockReadGuard,
     abort_signal: Option<&AbortSignal>,
+    font_loads: &crate::FontFaceLoads,
 ) {
     rules
         .filter_map(|rule| match rule {
@@ -434,18 +500,39 @@ pub(crate) fn fetch_font_face_rules<'a>(
             _ => None,
         })
         .for_each(|(source_list, overrides)| {
-            if let Some((url, format)) = preferred_font_source(source_list) {
+            let source = preferred_font_source(source_list);
+            let format = source
+                .as_ref()
+                .map(|(_, format)| *format)
+                .unwrap_or(FontFaceSourceFormatKeyword::None);
+            let face = crate::FontFaceLoad {
+                id: 0,
+                owner: node_id,
+                family: overrides.family_name.clone().unwrap(),
+                weight: overrides.weight.unwrap_or(400.0),
+                style: overrides.style.unwrap_or_default().to_string(),
+                status: crate::FontFaceLoadStatus::Loading,
+            };
+            let handler = ResourceHandler::new(
+                tx.clone(),
+                doc_id,
+                node_id,
+                shell_provider.clone(),
+                FontFaceHandler { format, overrides },
+            );
+            let id = handler.request_id();
+            font_loads
+                .lock()
+                .unwrap()
+                .insert(id, crate::FontFaceLoad { id, ..face });
+            if let Some((url, _)) = source {
                 network_provider.fetch(
                     doc_id,
                     stamped_request(url, abort_signal),
-                    ResourceHandler::boxed(
-                        tx.clone(),
-                        doc_id,
-                        node_id,
-                        shell_provider.clone(),
-                        FontFaceHandler { format, overrides },
-                    ),
+                    Box::new(handler),
                 );
+            } else {
+                handler.respond(String::new(), Err("No supported font source".into()));
             }
         })
 }
