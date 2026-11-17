@@ -39,29 +39,12 @@ pub(crate) fn register(context: &mut Context) {
         ("__blitz_sheet_style_remove", 3, style_remove_property),
     ];
     for (name, length, body) in fns {
-        let mutates = matches!(
-            *name,
-            "__blitz_sheet_set_disabled"
-                | "__blitz_sheet_insert_rule"
-                | "__blitz_sheet_delete_rule"
-                | "__blitz_sheet_set_selector_text"
-                | "__blitz_sheet_style_set_css_text"
-                | "__blitz_sheet_style_set"
-                | "__blitz_sheet_style_remove"
-        );
-        let body = *body;
+        #[cfg(feature = "ahcut")]
+        let function = super::font_mutations::guarded_cssom(name, *body);
+        #[cfg(not(feature = "ahcut"))]
+        let function = boa_engine::NativeFunction::from_fn_ptr(*body);
         context
-            .register_global_callable(
-                JsString::from(*name),
-                *length,
-                boa_engine::NativeFunction::from_copy_closure(move |this, args, context| {
-                    if mutates && dom_ctx(context)?.doc.borrow().font_stylesheets_frozen() {
-                        return Err(super::font_mutations::refusal());
-                    }
-                    super::font_mutations::valid(context)?;
-                    body(this, args, context)
-                }),
-            )
+            .register_global_callable(JsString::from(*name), *length, function)
             .expect("failed to register CSSOM function");
     }
 }

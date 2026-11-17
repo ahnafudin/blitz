@@ -3,7 +3,7 @@ use selectors::context::QuirksMode;
 use std::sync::atomic::Ordering as Ao;
 use std::{
     io::Cursor,
-    sync::{Arc, Mutex, atomic::AtomicUsize, mpsc::Sender},
+    sync::{Arc, atomic::AtomicUsize, mpsc::Sender},
 };
 use style::{
     font_face::{
@@ -56,14 +56,20 @@ pub struct FontFaceOverrides {
     pub style: Option<parley::fontique::FontStyle>,
 }
 
-/// A network callback may enqueue parsing, but only the document thread runs it.
+/// With `ahcut`, a style sheet from the network is parsed on the document thread: the network callback only
+/// enqueues the parse.
+#[cfg(feature = "ahcut")]
 #[derive(Clone)]
-pub struct DeferredStylesheet(Arc<Mutex<Option<Box<dyn FnOnce() + Send>>>>);
+pub struct DeferredStylesheet(Arc<std::sync::Mutex<Option<DeferredParse>>>);
+#[cfg(feature = "ahcut")]
+type DeferredParse = Box<dyn FnOnce() + Send>;
+#[cfg(feature = "ahcut")]
 impl std::fmt::Debug for DeferredStylesheet {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str("DeferredStylesheet")
     }
 }
+#[cfg(feature = "ahcut")]
 impl DeferredStylesheet {
     pub(crate) fn run(&self) {
         let parse = self.0.lock().unwrap().take();
@@ -75,6 +81,7 @@ impl DeferredStylesheet {
 
 #[derive(Clone, Debug)]
 pub enum Resource {
+    #[cfg(feature = "ahcut")]
     DeferredStylesheet(DeferredStylesheet),
     Image(ImageType, u32, u32, Arc<Vec<u8>>),
     #[cfg(feature = "svg")]
@@ -133,11 +140,12 @@ impl<T: Send + Sync + 'static> ResourceHandler<T> {
         self.request_id
     }
 
+    #[cfg(feature = "ahcut")]
     fn defer_stylesheet_response(
         self: Box<Self>,
         url: String,
         bytes: Bytes,
-        parse: fn(Box<Self>, String, Bytes),
+        parse: fn(&Self, String, Bytes),
     ) {
         let tx = self.tx.clone();
         let shell = self.shell_provider.clone();
@@ -146,7 +154,7 @@ impl<T: Send + Sync + 'static> ResourceHandler<T> {
             node_id: self.node_id,
             resolved_url: Some(url.clone()),
             result: Ok(Resource::DeferredStylesheet(DeferredStylesheet(Arc::new(
-                Mutex::new(Some(Box::new(move || parse(self, url, bytes)))),
+                std::sync::Mutex::new(Some(Box::new(move || parse(&self, url, bytes)))),
             )))),
         };
         let _ = tx.send(DocumentEvent::ResourceLoad(response));
@@ -180,6 +188,7 @@ pub struct StylesheetHandler {
     pub abort_signal: Option<AbortSignal>,
     pub font_loads: crate::FontFaceLoads,
     pub(crate) font_stylesheets: Arc<crate::FontStylesheetState>,
+    #[cfg(feature = "ahcut")]
     pub(crate) _pending: crate::font_loading::PendingStylesheet,
 }
 
@@ -189,12 +198,15 @@ impl NetHandler for ResourceHandler<StylesheetHandler> {
     }
 
     fn bytes(self: Box<Self>, resolved_url: String, bytes: Bytes) {
+        #[cfg(feature = "ahcut")]
         self.defer_stylesheet_response(resolved_url, bytes, Self::parse_stylesheet);
+        #[cfg(not(feature = "ahcut"))]
+        self.parse_stylesheet(resolved_url, bytes);
     }
 }
 
 impl ResourceHandler<StylesheetHandler> {
-    fn parse_stylesheet(self: Box<Self>, resolved_url: String, bytes: Bytes) {
+    fn parse_stylesheet(&self, resolved_url: String, bytes: Bytes) {
         // NOTE(Nico): I don't *think* external stylesheets should have HTML entities escaped
         // let escaped_css = html_escape::decode_html_entities(css);
 
@@ -293,6 +305,7 @@ impl ServoStylesheetLoader for StylesheetLoader {
                 self.owner,
                 self.shell_provider.clone(),
                 NestedStylesheetHandler {
+                    #[cfg(feature = "ahcut")]
                     _pending: self.font_stylesheets.pending(self.shell_provider.clone()),
                     url: url.clone(),
                     loader: StylesheetLoader {
@@ -312,6 +325,7 @@ impl ServoStylesheetLoader for StylesheetLoader {
 }
 
 struct NestedStylesheetHandler {
+    #[cfg(feature = "ahcut")]
     _pending: crate::font_loading::PendingStylesheet,
     loader: StylesheetLoader,
     lock: SharedRwLock,
@@ -323,12 +337,15 @@ struct NestedStylesheetHandler {
 
 impl NetHandler for ResourceHandler<NestedStylesheetHandler> {
     fn bytes(self: Box<Self>, resolved_url: String, bytes: Bytes) {
+        #[cfg(feature = "ahcut")]
         self.defer_stylesheet_response(resolved_url, bytes, Self::parse_stylesheet);
+        #[cfg(not(feature = "ahcut"))]
+        self.parse_stylesheet(resolved_url, bytes);
     }
 }
 
 impl ResourceHandler<NestedStylesheetHandler> {
-    fn parse_stylesheet(self: Box<Self>, resolved_url: String, bytes: Bytes) {
+    fn parse_stylesheet(&self, resolved_url: String, bytes: Bytes) {
         // NOTE(Nico): I don't *think* external stylesheets should have HTML entities escaped
         // let escaped_css = html_escape::decode_html_entities(css);
 

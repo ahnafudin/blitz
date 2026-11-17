@@ -112,6 +112,7 @@ impl ScriptDocument {
     }
 
     fn from_base_document_with_clock(doc: BaseDocument, clock: ScriptClock) -> Self {
+        #[cfg(feature = "ahcut")]
         doc.freeze_font_stylesheets();
         // The default base url (set when `DocumentConfig.base_url` is `None`) is a
         // meaningless data url. Treat it as "no base url".
@@ -500,6 +501,7 @@ impl Document for ScriptDocument {
         }
 
         ran |= self.runtime.run_due_timers();
+        #[cfg(feature = "ahcut")]
         if self.runtime.poll_font_loads() {
             self.runtime.run_jobs("font completion microtasks");
             ran = true;

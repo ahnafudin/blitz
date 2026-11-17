@@ -66,6 +66,7 @@ impl FontStylesheetState {
     pub(crate) fn active(&self) -> bool {
         !self.inner.lock().unwrap().invalid
     }
+    #[cfg(feature = "ahcut")]
     pub(crate) fn pending(
         self: &Arc<Self>,
         shell: Arc<dyn blitz_traits::shell::ShellProvider>,
@@ -81,10 +82,12 @@ impl FontStylesheetState {
         }
     }
 }
+#[cfg(feature = "ahcut")]
 pub(crate) struct PendingStylesheet {
     state: Arc<FontStylesheetState>,
     shell: Arc<dyn blitz_traits::shell::ShellProvider>,
 }
+#[cfg(feature = "ahcut")]
 impl Drop for PendingStylesheet {
     fn drop(&mut self) {
         {
@@ -180,14 +183,19 @@ impl BaseDocument {
         if self.refuse_frozen_font_stylesheet_mutation() {
             return;
         }
-        self.font_loads.lock().unwrap().retain(|id, face| {
-            if face.owner == Some(owner) {
-                self.retired_font_loads.insert(*id);
-                false
-            } else {
-                true
-            }
-        });
+        let mut loads = self.font_loads.lock().unwrap();
+        let retired: Vec<usize> = loads
+            .values()
+            .filter(|face| face.owner == Some(owner))
+            .map(|face| face.id)
+            .collect();
+        loads.retain(|_, face| face.owner != Some(owner));
+        drop(loads);
+        // With `ahcut`, a late response for a retired face is dropped instead of registered.
+        #[cfg(feature = "ahcut")]
+        self.retired_font_loads.extend(retired);
+        #[cfg(not(feature = "ahcut"))]
+        let _ = retired;
     }
 
     /// Parse with the same CSS parser as element.style, then select declared variants.

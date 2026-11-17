@@ -331,6 +331,7 @@ pub struct BaseDocument {
     pub(crate) font_ctx: Arc<Mutex<parley::FontContext>>,
     pub(crate) font_loads: crate::FontFaceLoads,
     pub(crate) font_stylesheets: Arc<crate::FontStylesheetState>,
+    #[cfg(feature = "ahcut")]
     pub(crate) retired_font_loads: HashSet<usize>,
     #[cfg(feature = "parallel-construct")]
     /// Thread-and-document-local copies to the font context
@@ -561,6 +562,7 @@ impl BaseDocument {
             font_ctx,
             font_stylesheets: Arc::new(crate::FontStylesheetState::new(font_loads.clone())),
             font_loads,
+            #[cfg(feature = "ahcut")]
             retired_font_loads: HashSet::new(),
             #[cfg(feature = "parallel-construct")]
             thread_font_contexts: ThreadLocal::new(),
@@ -1257,6 +1259,7 @@ impl BaseDocument {
                                     net_provider: self.net_provider.clone(),
                                     abort_signal: self.abort_signal.clone(),
                                     font_loads: self.font_loads.clone(),
+                                    #[cfg(feature = "ahcut")]
                                     _pending: self
                                         .font_stylesheets
                                         .pending(self.shell_provider.clone()),
@@ -1451,6 +1454,7 @@ impl BaseDocument {
             return;
         }
         self.pending_critical_resources.remove(&res.request_id);
+        #[cfg(feature = "ahcut")]
         if self.retired_font_loads.remove(&res.request_id) {
             return;
         }
@@ -1483,6 +1487,7 @@ impl BaseDocument {
         };
 
         match resource {
+            #[cfg(feature = "ahcut")]
             Resource::DeferredStylesheet(parse) => parse.run(),
             Resource::Css(css) => {
                 let node_id = res.node_id.unwrap();

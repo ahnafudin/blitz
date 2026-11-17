@@ -12,6 +12,7 @@ mod geometry;
 mod markup;
 mod scrolling;
 mod selectors;
+#[cfg(feature = "ahcut")]
 mod svg;
 
 pub(crate) use attributes::{attr_name, read_attr, write_attr};
@@ -337,7 +338,9 @@ pub(crate) fn init_element_proto(proto: &JsObject, context: &mut Context) {
         geometry::get_client_rects,
         context,
     );
+    #[cfg(feature = "ahcut")]
     define_method(proto, "__blitz_svg_bbox", 0, svg::bbox, context);
+    #[cfg(feature = "ahcut")]
     define_method(proto, "__blitz_svg_ctm", 0, svg::ctm, context);
     // ParentNode mixin mutation helpers
     define_method(proto, "append", 1, super::node::append, context);

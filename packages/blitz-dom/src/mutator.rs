@@ -1387,6 +1387,7 @@ impl<'doc> DocumentMutator<'doc> {
                 abort_signal: self.doc.abort_signal.clone(),
                 font_loads: self.doc.font_loads.clone(),
                 font_stylesheets: self.doc.font_stylesheets.clone(),
+                #[cfg(feature = "ahcut")]
                 _pending: self
                     .doc
                     .font_stylesheets

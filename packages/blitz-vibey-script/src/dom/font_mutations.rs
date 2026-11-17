@@ -1,20 +1,50 @@
-//! Refuse stylesheet graph mutations before touching the immutable script-document font contexts.
-use super::{dom_ctx, node_id_of_value};
+//! With `ahcut`: refuse style sheet changes once the script document's style sheets are frozen.
+use super::{NativeFnPtr, dom_ctx, node_id_of_value};
 use blitz_dom::{BaseDocument, NodeId};
-use boa_engine::{Context, JsNativeError, JsResult, JsValue};
+use boa_engine::{Context, JsNativeError, JsResult, JsValue, NativeFunction};
 
-pub(super) const REBUILD: &str =
+const REBUILD: &str =
     "STYLESHEET_REBUILD_REQUIRED: recreate ScriptDocument to change stylesheet definitions";
-pub(super) fn refusal() -> boa_engine::JsError {
+fn refusal() -> boa_engine::JsError {
     JsNativeError::typ().with_message(REBUILD).into()
 }
-pub(super) fn valid(context: &mut Context) -> JsResult<()> {
+fn valid(context: &mut Context) -> JsResult<()> {
     if !dom_ctx(context)?.doc.borrow().font_stylesheets_valid() {
         return Err(refusal());
     }
     Ok(())
 }
-pub(super) fn kind(name: &str, setter: bool) -> u8 {
+/// A DOM method or setter that checks the freeze before and the document after it runs.
+pub(super) fn guarded(name: &str, setter: bool, body: NativeFnPtr) -> NativeFunction {
+    let guard = kind(name, setter);
+    NativeFunction::from_copy_closure(move |this, args, context| {
+        let args = preflight(guard, this, args, context)?;
+        let result = body(this, &args, context)?;
+        valid(context)?;
+        Ok(result)
+    })
+}
+/// A CSSOM native: the ones that change a sheet are refused while the style sheets are frozen.
+pub(super) fn guarded_cssom(name: &str, body: NativeFnPtr) -> NativeFunction {
+    let mutates = matches!(
+        name,
+        "__blitz_sheet_set_disabled"
+            | "__blitz_sheet_insert_rule"
+            | "__blitz_sheet_delete_rule"
+            | "__blitz_sheet_set_selector_text"
+            | "__blitz_sheet_style_set_css_text"
+            | "__blitz_sheet_style_set"
+            | "__blitz_sheet_style_remove"
+    );
+    NativeFunction::from_copy_closure(move |this, args, context| {
+        if mutates && dom_ctx(context)?.doc.borrow().font_stylesheets_frozen() {
+            return Err(refusal());
+        }
+        valid(context)?;
+        body(this, args, context)
+    })
+}
+fn kind(name: &str, setter: bool) -> u8 {
     match name {
         "innerHTML" | "outerHTML" if setter => 3,
         "insertAdjacentHTML" => 4,
@@ -66,7 +96,7 @@ fn css_subtree(doc: &BaseDocument, id: NodeId) -> bool {
     }
     false
 }
-pub(super) fn preflight(
+fn preflight(
     kind: u8,
     this: &JsValue,
     args: &[JsValue],

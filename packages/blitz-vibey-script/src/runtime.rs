@@ -23,6 +23,7 @@ mod bootstrap;
 mod css;
 mod events;
 mod fetch;
+#[cfg(feature = "ahcut")]
 mod fonts;
 mod modules;
 mod timers;
@@ -124,6 +125,8 @@ impl ScriptRuntime {
 
         // Install JavaScript APIs after the native bindings.
         runtime.eval_internal(BOOTSTRAP_JS, "<blitz-bootstrap>");
+        #[cfg(feature = "ahcut")]
+        runtime.eval_internal(bootstrap::FONT_LOADING_JS, "<blitz-font-loading>");
         runtime.eval_internal(GEOMETRY_JS, "<blitz-geometry>");
 
         runtime
@@ -144,6 +147,7 @@ impl ScriptRuntime {
 
     /// Run pending promise jobs (microtasks)
     pub fn run_jobs(&mut self, description: &str) {
+        #[cfg(feature = "ahcut")]
         self.poll_font_loads();
         if let Err(error) = self.context.run_jobs() {
             report_js_error(&self.ctx, &mut self.context, description, &error);
@@ -151,6 +155,7 @@ impl ScriptRuntime {
     }
 
     /// Pump real font completions even when virtual time has not advanced.
+    #[cfg(feature = "ahcut")]
     pub fn poll_font_loads(&mut self) -> bool {
         match self.context.eval(Source::from_bytes(
             "typeof __blitz_poll_fonts === 'function' && __blitz_poll_fonts()",

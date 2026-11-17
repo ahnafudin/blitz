@@ -10,6 +10,9 @@ use crate::dom::node_wrapper;
 use crate::state::DomCtx;
 
 pub(super) const GEOMETRY_JS: &str = include_str!("../geometry.js");
+/// With `ahcut`: replaces the `document.fonts` stub with one that tracks declared @font-face loads.
+#[cfg(feature = "ahcut")]
+pub(super) const FONT_LOADING_JS: &str = include_str!("bootstrap/font_loading.js");
 
 // Concatenate into one IIFE to preserve shared lexical bindings, installation
 // order, and short-circuiting on errors. Geometry remains a separate evaluation.
@@ -118,6 +121,7 @@ pub(super) fn register_globals(ctx: &DomCtx, base_url: Option<&Url>, context: &m
         css::css_property_supported,
     );
 
+    #[cfg(feature = "ahcut")]
     register_global_fn(context, "__blitz_font_snapshot", 1, super::fonts::snapshot);
 
     // `getComputedStyle`
