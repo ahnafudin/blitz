@@ -3,8 +3,9 @@ use style::color::AbsoluteColor;
 pub(crate) use style::computed_values::filter::single_value::T as StyloFilter;
 
 use anyrender::filters::{Filter, FilterEffect};
+use kurbo::Rect;
 
-pub(crate) fn convert_filters(filters: &[StyloFilter]) -> Option<Filter> {
+pub(crate) fn convert_filters(filters: &[StyloFilter], bounds: Rect) -> Option<Filter> {
     if filters.is_empty() {
         return None;
     }
@@ -19,6 +20,7 @@ pub(crate) fn convert_filters(filters: &[StyloFilter]) -> Option<Filter> {
 
     Some(Filter::linear_list(
         filters.iter().filter_map(convert_single_filter),
+        bounds,
     ))
 }
 

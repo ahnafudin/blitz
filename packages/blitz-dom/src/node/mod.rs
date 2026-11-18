@@ -34,4 +34,4 @@ pub use svg::{SvgImageData, SvgIntrinsicDimensions};
 pub use svg_refusals::SvgExternalImage;
 #[cfg(feature = "ahcut")]
 pub(crate) use svg_refusals::SvgRefusals;
-pub use text::{GeneratedTextInputEvent, TextBrush, TextInputData, TextLayout};
+pub use text::{GeneratedTextInputEvent, INLINE_BOX_CHAR, TextBrush, TextInputData, TextLayout};

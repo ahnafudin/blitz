@@ -92,7 +92,7 @@ impl BaseDocument {
         } else {
             viewport.svg_source_with_target(Some((node_id, &marker)))
         };
-        let svg = crate::util::parse_svg_image(source.as_bytes())
+        let svg = crate::util::parse_svg(source.as_bytes(), None)
             .map_err(|error| format!("SVG geometry parse failed: {error}"))?;
         let layout = viewport.final_layout();
         let width = layout.size.width
@@ -109,6 +109,8 @@ impl BaseDocument {
             return Err("SVG viewport has no rendered area".into());
         }
         let viewport_transform = svg.viewport_transform(width, height);
+        // usvg has no box for an element without geometry; SVG's is empty, at the origin.
+        let empty = || usvg::Rect::from_xywh(0.0, 0.0, 0.0, 0.0);
         let (bounds, transform) = if viewport_id == node_id {
             let user_to_tree = svg.user_to_tree_transform();
             let inverse = user_to_tree
@@ -118,7 +120,8 @@ impl BaseDocument {
                 .tree
                 .root()
                 .bounding_box()
-                .transform(inverse)
+                .or_else(empty)
+                .and_then(|bounds| bounds.transform(inverse))
                 .ok_or("SVG bounds are not finite")?;
             (bounds, viewport_transform.pre_concat(user_to_tree))
         } else {
@@ -127,7 +130,10 @@ impl BaseDocument {
                 .node_by_id(&marker)
                 .ok_or("SVG element has no renderable geometry")?;
             (
-                target.bounding_box(),
+                target
+                    .bounding_box()
+                    .or_else(empty)
+                    .ok_or("SVG bounds are not finite")?,
                 viewport_transform.pre_concat(target.abs_transform()),
             )
         };

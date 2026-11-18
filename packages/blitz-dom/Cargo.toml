@@ -22,7 +22,7 @@ default = [
 ]
 custom-widget = ["dep:anyrender", "accessibility"]
 tracing = ["dep:tracing"]
-svg = ["dep:usvg", "dep:svgtypes"]
+svg = ["dep:usvg", "dep:svgtypes", "dep:png"]
 # Opt-in behaviour for an embedder that renders through a checked path: SVG filters resolved with style sheet
 # provenance, SVG text and non-`data:` SVG image sources detected and not loaded, CSSOM colour-space carry;
 # for `document.fonts` readiness, style sheets from the network parsed on the document thread, pending style
@@ -98,6 +98,7 @@ rayon = { workspace = true }
 # Media & Decoding
 image = { workspace = true }
 usvg = { workspace = true, optional = true }
+png = { workspace = true, optional = true }
 svgtypes = { workspace = true, optional = true }
 wuff = { workspace = true, optional = true }
 html-escape = { workspace = true }

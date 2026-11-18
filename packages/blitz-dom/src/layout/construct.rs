@@ -16,6 +16,8 @@ use style::{
 };
 use thin_vec::ThinVec;
 
+use crate::stylo::BlitzNode;
+
 use crate::{
     BaseDocument, ElementData, Node, NodeData,
     layout::damage::{
@@ -141,7 +143,7 @@ impl LayoutChildren {
         let parent_style = doc.nodes[container_node_id].primary_styles().unwrap();
         let read_guard = doc.guard.read();
         let guards = StylesheetGuards::same(&read_guard);
-        let style = doc.stylist.style_for_anonymous::<&Node>(
+        let style = doc.stylist.style_for_anonymous::<BlitzNode>(
             &guards,
             &PseudoElement::ServoAnonymousBox,
             &parent_style,
@@ -407,6 +409,11 @@ fn collect_layout_children_with_wrap(
 ) {
     // Record the `display` the box is being constructed with
     if let Some(display) = doc.nodes[container_node_id].display_style() {
+        if display.is_none() {
+            doc.iter_subtree_mut(container_node_id, |id, doc| doc.reset_node_scroll_state(id));
+        } else if matches!(display.inside(), DisplayInside::Contents) {
+            doc.reset_node_scroll_state(container_node_id);
+        }
         *doc.nodes[container_node_id].display_constructed_as_mut() = display;
     }
 
@@ -453,7 +460,8 @@ fn collect_layout_children_with_wrap(
                 doc.nodes[id].remove_damage(CONSTRUCT_BOX | CONSTRUCT_DESCENDENT | CONSTRUCT_FC);
             });
 
-            match crate::util::parse_svg_image(outer_html.as_bytes()) {
+            match crate::util::parse_svg(outer_html.as_bytes(), Some((&doc.url, &doc.image_cache)))
+            {
                 Ok(svg) => {
                     doc.get_node_mut(container_node_id)
                         .unwrap()
