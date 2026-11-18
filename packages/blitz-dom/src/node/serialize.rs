@@ -6,6 +6,7 @@ use style_traits::values::ToCss;
 use stylo_taffy::CopyStyleGetters;
 
 use super::{Node, NodeData};
+use blitz_traits::node_id::NodeId;
 
 #[derive(Clone, Copy)]
 enum OutputStyle {
@@ -14,7 +15,7 @@ enum OutputStyle {
 }
 
 #[derive(Clone, Copy)]
-struct SerializeOpts {
+struct SerializeOpts<'a> {
     style: OutputStyle,
     /// Replace `currentColor` in attribute values with the element's computed `color`
     resolve_current_color: bool,
@@ -25,9 +26,11 @@ struct SerializeOpts {
     skip_root_transform: bool,
     /// Leave the root background to CSS box painting rather than usvg
     skip_root_background: bool,
+    /// Give this node the `id` an SVG geometry query looks it up by, in place of its own
+    geometry_target: Option<(NodeId, &'a str)>,
 }
 
-impl SerializeOpts {
+impl SerializeOpts<'_> {
     const fn html(style: OutputStyle) -> Self {
         Self {
             style,
@@ -35,6 +38,7 @@ impl SerializeOpts {
             xml_namespaces: false,
             skip_root_transform: false,
             skip_root_background: false,
+            geometry_target: None,
         }
     }
 }
@@ -156,6 +160,11 @@ impl Node {
     /// `currentColor` resolved against each element's computed `color`.
     #[cfg(feature = "svg")]
     pub(crate) fn svg_source(&self) -> String {
+        self.svg_source_with_target(None)
+    }
+
+    #[cfg(feature = "svg")]
+    pub(crate) fn svg_source_with_target(&self, target: Option<(NodeId, &str)>) -> String {
         let mut output = String::new();
         let opts = SerializeOpts {
             style: OutputStyle::Normal,
@@ -163,12 +172,18 @@ impl Node {
             xml_namespaces: true,
             skip_root_transform: true,
             skip_root_background: true,
+            geometry_target: target,
         };
         self.write_outer_html_in_style(&mut output, opts, 0);
         output
     }
 
-    fn write_outer_html_in_style(&self, writer: &mut String, opts: SerializeOpts, nesting: usize) {
+    fn write_outer_html_in_style(
+        &self,
+        writer: &mut String,
+        opts: SerializeOpts<'_>,
+        nesting: usize,
+    ) {
         const INDENT: &str = "  ";
         let style = opts.style;
         let has_children = !self.children.is_empty();
@@ -242,8 +257,20 @@ impl Node {
                     }
                 }
 
+                if let Some((id, marker)) = opts.geometry_target {
+                    if self.id == id {
+                        writer.push_str(" id=\"");
+                        encode_quoted_attribute_to_string(marker, writer);
+                        writer.push('"');
+                    }
+                }
                 let mut declared_prefixes = Vec::new();
                 for attr in data.attrs() {
+                    if opts.geometry_target.is_some_and(|(id, _)| self.id == id)
+                        && attr.name.local.as_str() == "id"
+                    {
+                        continue;
+                    }
                     if opts.skip_root_transform
                         && nesting == 0
                         && attr.name.ns == ns!()

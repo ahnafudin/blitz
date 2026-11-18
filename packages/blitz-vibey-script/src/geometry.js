@@ -1330,6 +1330,31 @@
         const nativeBoundingRect = elementProto.getBoundingClientRect;
         const nativeClientRects = elementProto.getClientRects;
         const toDomRect = (r) => makeRect(DOMRect, r.x, r.y, r.width, r.height);
+        const nativeSvgBBox = elementProto.__blitz_svg_bbox;
+        const nativeSvgCtm = elementProto.__blitz_svg_ctm;
+        // SVG geometry exists only when the natives do (blitz-vibey-script's `ahcut` feature).
+        if (typeof nativeSvgBBox === "function" && typeof nativeSvgCtm === "function") {
+            const svgNamespace = "http://www.w3.org/2000/svg";
+            const svgBBox = function getBBox(...args) { return toDomRect(nativeSvgBBox.apply(this, args)); };
+            const svgCtm = function getCTM() { return new DOMMatrix(nativeSvgCtm.call(this)); };
+            Object.defineProperties(elementProto, {
+                // Namespace gating preserves SVG feature detection on HTML elements.
+                getBBox: { configurable: true, get() { return this.namespaceURI === svgNamespace ? svgBBox : undefined; } },
+                getCTM: { configurable: true, get() { return this.namespaceURI === svgNamespace ? svgCtm : undefined; } },
+                ownerSVGElement: {
+                    configurable: true,
+                    get() {
+                        if (this.namespaceURI !== svgNamespace) return undefined;
+                        let parent = this.parentNode;
+                        while (parent) {
+                            if (parent.namespaceURI === svgNamespace && parent.localName === 'svg') return parent;
+                            parent = parent.parentNode;
+                        }
+                        return null;
+                    },
+                },
+            });
+        }
         Object.defineProperties(elementProto, {
             getBoundingClientRect: {
                 value: function getBoundingClientRect() {

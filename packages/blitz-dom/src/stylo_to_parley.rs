@@ -75,23 +75,27 @@ pub(crate) fn fallback_font_family(
     (!names_generic).then_some(parley::GenericFamily::Serif)
 }
 
+/// Family names that are aliases of a generic family, the same on every build target so that a document is
+/// shaped, and admitted, alike everywhere: the names for the system UI face (`system-ui` should Stylo leave it a
+/// name, and the legacy `-apple-system` and `BlinkMacSystemFont`), and the default style sheet's own name for the
+/// fixed-width face (`pre`, `code`, `kbd`, `samp`, `listing`). Every other name is a named family.
+pub(crate) fn generic_alias(name: &str) -> Option<parley::GenericFamily> {
+    match name {
+        "system-ui" | "-apple-system" | "BlinkMacSystemFont" => {
+            Some(parley::GenericFamily::SystemUi)
+        }
+        "-moz-fixed" => Some(parley::GenericFamily::Monospace),
+        _ => None,
+    }
+}
+
 pub(crate) fn query_font_family(input: &stylo::SingleFontFamily) -> parley::QueryFamily<'_> {
     match input {
         stylo::SingleFontFamily::FamilyName(name) => {
-            'ret: {
-                let name = name.name.as_str();
-
-                // Legacy web compatibility
-                #[cfg(target_vendor = "apple")]
-                if name == "-apple-system" {
-                    break 'ret parley::QueryFamily::Generic(parley::GenericFamily::SystemUi);
-                }
-                #[cfg(target_os = "macos")]
-                if name == "BlinkMacSystemFont" {
-                    break 'ret parley::QueryFamily::Generic(parley::GenericFamily::SystemUi);
-                }
-
-                break 'ret parley::QueryFamily::Named(name);
+            let name = name.name.as_str();
+            match generic_alias(name) {
+                Some(generic) => parley::QueryFamily::Generic(generic),
+                None => parley::QueryFamily::Named(name),
             }
         }
         stylo::SingleFontFamily::Generic(generic) => {
@@ -480,24 +484,10 @@ pub(crate) fn style(
         .iter()
         .map(|family| match family {
             stylo::SingleFontFamily::FamilyName(name) => {
-                'ret: {
-                    let name = name.name.as_str();
-
-                    // Legacy web compatibility
-                    #[cfg(target_vendor = "apple")]
-                    if name == "-apple-system" {
-                        break 'ret parley::FontFamilyName::Generic(
-                            parley::GenericFamily::SystemUi,
-                        );
-                    }
-                    #[cfg(target_os = "macos")]
-                    if name == "BlinkMacSystemFont" {
-                        break 'ret parley::FontFamilyName::Generic(
-                            parley::GenericFamily::SystemUi,
-                        );
-                    }
-
-                    break 'ret parley::FontFamilyName::Named(Cow::Owned(name.to_string()));
+                let name = name.name.as_str();
+                match self::generic_alias(name) {
+                    Some(generic) => parley::FontFamilyName::Generic(generic),
+                    None => parley::FontFamilyName::Named(Cow::Owned(name.to_string())),
                 }
             }
             stylo::SingleFontFamily::Generic(generic) => {

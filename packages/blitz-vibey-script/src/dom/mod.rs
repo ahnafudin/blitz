@@ -9,6 +9,8 @@
 pub(crate) mod document;
 pub(crate) mod element;
 pub(crate) mod event;
+#[cfg(feature = "ahcut")]
+mod font_mutations;
 pub(crate) mod hyperlink;
 pub(crate) mod node;
 pub(crate) mod selection;
@@ -212,6 +214,16 @@ pub(crate) fn to_rust_string(value: &JsValue, context: &mut Context) -> JsResult
 
 pub(crate) type NativeFnPtr = fn(&JsValue, &[JsValue], &mut Context) -> JsResult<JsValue>;
 
+/// The native function of a DOM method or setter. With `ahcut`, it is guarded by the style sheet freeze.
+#[cfg(feature = "ahcut")]
+fn native(name: &str, setter: bool, body: NativeFnPtr) -> NativeFunction {
+    font_mutations::guarded(name, setter, body)
+}
+#[cfg(not(feature = "ahcut"))]
+fn native(_: &str, _: bool, body: NativeFnPtr) -> NativeFunction {
+    NativeFunction::from_fn_ptr(body)
+}
+
 /// Define a method on a prototype object
 pub(crate) fn define_method(
     obj: &JsObject,
@@ -220,7 +232,7 @@ pub(crate) fn define_method(
     body: NativeFnPtr,
     context: &mut Context,
 ) {
-    let function = FunctionObjectBuilder::new(context.realm(), NativeFunction::from_fn_ptr(body))
+    let function = FunctionObjectBuilder::new(context.realm(), native(name, false, body))
         .name(JsString::from(name))
         .length(length)
         .build();
@@ -252,7 +264,7 @@ pub(crate) fn define_accessor(
             .build()
     });
     let setter = setter.map(|s| {
-        FunctionObjectBuilder::new(context.realm(), NativeFunction::from_fn_ptr(s))
+        FunctionObjectBuilder::new(context.realm(), native(name, true, s))
             .name(JsString::from(format!("set {name}")))
             .length(1)
             .build()
