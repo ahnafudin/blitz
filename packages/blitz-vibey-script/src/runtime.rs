@@ -12,6 +12,7 @@ use boa_runtime::Console;
 use boa_runtime::console::{ConsoleState, Logger};
 use url::Url;
 
+use crate::clock::ScriptClock;
 use crate::fetch::ScriptFetcher;
 use crate::state::{DomCtx, ReadyState};
 use bootstrap::{BOOTSTRAP_JS, GEOMETRY_JS};
@@ -22,6 +23,8 @@ mod bootstrap;
 mod css;
 mod events;
 mod fetch;
+#[cfg(feature = "ahcut")]
+mod fonts;
 mod modules;
 mod timers;
 mod window;
@@ -61,6 +64,7 @@ impl ScriptRuntime {
         doc: Rc<RefCell<BaseDocument>>,
         base_url: Option<&Url>,
         fetcher: Rc<RefCell<Box<dyn ScriptFetcher>>>,
+        clock: ScriptClock,
     ) -> Self {
         let module_loader = Rc::new(BlitzModuleLoader::new(
             Rc::clone(&fetcher),
@@ -71,6 +75,8 @@ impl ScriptRuntime {
             let mut state = ctx.state.borrow_mut();
             state.base_url = base_url.cloned();
             state.fetcher = Some(fetcher);
+            state.clock = clock;
+            state.animation_time_origin = Some(state.clock.now());
         }
         // Share the runtime's clock with boa so that `Date` observes the same
         // (possibly virtual) time as timers
@@ -119,6 +125,8 @@ impl ScriptRuntime {
 
         // Install JavaScript APIs after the native bindings.
         runtime.eval_internal(BOOTSTRAP_JS, "<blitz-bootstrap>");
+        #[cfg(feature = "ahcut")]
+        runtime.eval_internal(bootstrap::FONT_LOADING_JS, "<blitz-font-loading>");
         runtime.eval_internal(GEOMETRY_JS, "<blitz-geometry>");
 
         runtime
@@ -139,8 +147,24 @@ impl ScriptRuntime {
 
     /// Run pending promise jobs (microtasks)
     pub fn run_jobs(&mut self, description: &str) {
+        #[cfg(feature = "ahcut")]
+        self.poll_font_loads();
         if let Err(error) = self.context.run_jobs() {
             report_js_error(&self.ctx, &mut self.context, description, &error);
+        }
+    }
+
+    /// Pump real font completions even when virtual time has not advanced.
+    #[cfg(feature = "ahcut")]
+    pub fn poll_font_loads(&mut self) -> bool {
+        match self.context.eval(Source::from_bytes(
+            "typeof __blitz_poll_fonts === 'function' && __blitz_poll_fonts()",
+        )) {
+            Ok(changed) => changed.to_boolean(),
+            Err(error) => {
+                report_js_error(&self.ctx, &mut self.context, "font completion", &error);
+                false
+            }
         }
     }
 

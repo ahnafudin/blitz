@@ -584,10 +584,22 @@ impl ElementCx<'_, '_> {
                     y: hc as f64 * y.stride,
                 });
 
+                let brush = to_peniko_image(image_data, quality);
+                // Only `repeat` and `round` fill their axis with one repeating brush; a tile drawn on its own
+                // (`no-repeat`, `space`) is a single image along that axis.
+                #[cfg(feature = "ahcut")]
+                let brush = {
+                    use BackgroundRepeatKeyword::{Repeat, Round};
+                    super::single_image_extend(
+                        brush,
+                        matches!(*repeat_x, Repeat | Round),
+                        matches!(*repeat_y, Repeat | Round),
+                    )
+                };
                 scene.fill(
                     peniko::Fill::NonZero,
                     transform,
-                    to_peniko_image(image_data, quality).as_ref(),
+                    brush.as_ref(),
                     None,
                     &tile_rect,
                     AntiAliasing::Enabled,

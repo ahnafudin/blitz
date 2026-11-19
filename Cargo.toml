@@ -301,6 +301,38 @@ vello_gpu = "0.4"
 wgpu = { workspace = true }
 wgpu_context = { workspace = true }
 
+# The versions used by the optional ahcut features. Cargo applies patches at the workspace root.
+[patch.crates-io]
+anyrender = { git = "https://github.com/ahnafudin/anyrender", rev = "222e16cf41382f07392ee189a5594b1c3dd34b50" }
+anyrender_serialize = { git = "https://github.com/ahnafudin/anyrender", rev = "222e16cf41382f07392ee189a5594b1c3dd34b50" }
+anyrender_skia = { git = "https://github.com/ahnafudin/anyrender", rev = "222e16cf41382f07392ee189a5594b1c3dd34b50" }
+anyrender_svg = { git = "https://github.com/ahnafudin/anyrender", rev = "222e16cf41382f07392ee189a5594b1c3dd34b50" }
+anyrender_tiny_skia = { git = "https://github.com/ahnafudin/anyrender", rev = "222e16cf41382f07392ee189a5594b1c3dd34b50" }
+anyrender_vello = { git = "https://github.com/ahnafudin/anyrender", rev = "222e16cf41382f07392ee189a5594b1c3dd34b50" }
+anyrender_vello_cpu = { git = "https://github.com/ahnafudin/anyrender", rev = "222e16cf41382f07392ee189a5594b1c3dd34b50" }
+anyrender_vello_gpu = { git = "https://github.com/ahnafudin/anyrender", rev = "222e16cf41382f07392ee189a5594b1c3dd34b50" }
+image_filters_types = { git = "https://github.com/ahnafudin/anyrender", rev = "222e16cf41382f07392ee189a5594b1c3dd34b50" }
+pixels_window_renderer = { git = "https://github.com/ahnafudin/anyrender", rev = "222e16cf41382f07392ee189a5594b1c3dd34b50" }
+softbuffer_window_renderer = { git = "https://github.com/ahnafudin/anyrender", rev = "222e16cf41382f07392ee189a5594b1c3dd34b50" }
+wgpu_context = { git = "https://github.com/ahnafudin/anyrender", rev = "222e16cf41382f07392ee189a5594b1c3dd34b50" }
+
+selectors = { git = "https://github.com/ahnafudin/stylo", rev = "b6e46269659d5aad99679c640ff2b737ddc5da0e" }
+servo_arc = { git = "https://github.com/ahnafudin/stylo", rev = "b6e46269659d5aad99679c640ff2b737ddc5da0e" }
+stylo = { git = "https://github.com/ahnafudin/stylo", rev = "b6e46269659d5aad99679c640ff2b737ddc5da0e" }
+stylo_atoms = { git = "https://github.com/ahnafudin/stylo", rev = "b6e46269659d5aad99679c640ff2b737ddc5da0e" }
+stylo_derive = { git = "https://github.com/ahnafudin/stylo", rev = "b6e46269659d5aad99679c640ff2b737ddc5da0e" }
+stylo_dom = { git = "https://github.com/ahnafudin/stylo", rev = "b6e46269659d5aad99679c640ff2b737ddc5da0e" }
+stylo_malloc_size_of = { git = "https://github.com/ahnafudin/stylo", rev = "b6e46269659d5aad99679c640ff2b737ddc5da0e" }
+stylo_static_prefs = { git = "https://github.com/ahnafudin/stylo", rev = "b6e46269659d5aad99679c640ff2b737ddc5da0e" }
+stylo_traits = { git = "https://github.com/ahnafudin/stylo", rev = "b6e46269659d5aad99679c640ff2b737ddc5da0e" }
+to_shmem = { git = "https://github.com/ahnafudin/stylo", rev = "b6e46269659d5aad99679c640ff2b737ddc5da0e" }
+to_shmem_derive = { git = "https://github.com/ahnafudin/stylo", rev = "b6e46269659d5aad99679c640ff2b737ddc5da0e" }
+
+glifo = { git = "https://github.com/ahnafudin/vello", rev = "14cec33c66f93830ffe10e59f16e16428a277a1c" }
+vello_common = { git = "https://github.com/ahnafudin/vello", rev = "14cec33c66f93830ffe10e59f16e16428a277a1c" }
+vello_cpu = { git = "https://github.com/ahnafudin/vello", rev = "14cec33c66f93830ffe10e59f16e16428a277a1c" }
+vello_gpu = { git = "https://github.com/ahnafudin/vello", rev = "14cec33c66f93830ffe10e59f16e16428a277a1c" }
+
 # [patch.crates-io]
 # anyrender = { path = "../anyrender/crates/anyrender" }
 # anyrender_skia = { path = "../anyrender/crates/anyrender_skia" }

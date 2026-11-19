@@ -45,7 +45,13 @@ use std::sync::{Arc, LazyLock};
 use usvg::fontdb;
 #[cfg(feature = "svg")]
 pub(crate) static FONT_DB: LazyLock<Arc<fontdb::Database>> = LazyLock::new(|| {
+    #[cfg_attr(
+        all(feature = "ahcut", not(feature = "system-fonts")),
+        allow(unused_mut)
+    )]
     let mut db = fontdb::Database::new();
+    // With `ahcut`, a build without `system-fonts` reads no font of the machine here either.
+    #[cfg(any(feature = "system-fonts", not(feature = "ahcut")))]
     db.load_system_fonts();
     Arc::new(db)
 });
@@ -173,22 +179,31 @@ pub(crate) fn parse_svg(
         &std::collections::HashMap<String, crate::node::ImageData>,
     )>,
 ) -> Result<crate::node::SvgImageData, usvg::Error> {
-    let options = usvg::Options {
-        fontdb: Arc::clone(&*FONT_DB),
-        image_href_resolver: usvg::ImageHrefResolver {
-            resolve_data: usvg::ImageHrefResolver::default_data_resolver(),
-            resolve_string: Box::new(move |href, _| {
-                let (base_url, image_cache) = images?;
-                svg_image_kind(image_cache.get(base_url.resolve_relative(href)?.as_str())?)
-            }),
-        },
-        ..Default::default()
-    };
-    crate::node::SvgImageData::from_data(source, &options)
+    // A checked render loads no external image: the mutator starts no such load and usvg is handed none.
+    #[cfg(feature = "ahcut")]
+    {
+        let _ = images;
+        parse_svg_refusing_external(source)
+    }
+    #[cfg(not(feature = "ahcut"))]
+    {
+        let options = usvg::Options {
+            fontdb: Arc::clone(&*FONT_DB),
+            image_href_resolver: usvg::ImageHrefResolver {
+                resolve_data: usvg::ImageHrefResolver::default_data_resolver(),
+                resolve_string: Box::new(move |href, _| {
+                    let (base_url, image_cache) = images?;
+                    svg_image_kind(image_cache.get(base_url.resolve_relative(href)?.as_str())?)
+                }),
+            },
+            ..Default::default()
+        };
+        crate::node::SvgImageData::from_data(source, &options)
+    }
 }
 
 /// A loaded image as an image usvg can render
-#[cfg(feature = "svg")]
+#[cfg(all(feature = "svg", not(feature = "ahcut")))]
 fn svg_image_kind(image: &crate::node::ImageData) -> Option<usvg::ImageKind> {
     use crate::node::ImageData;
     match image {
@@ -202,7 +217,7 @@ fn svg_image_kind(image: &crate::node::ImageData) -> Option<usvg::ImageKind> {
     }
 }
 
-#[cfg(feature = "svg")]
+#[cfg(all(feature = "svg", not(feature = "ahcut")))]
 fn encode_png(image: &crate::node::RasterImageData) -> Option<Vec<u8>> {
     let mut png = Vec::new();
     let mut encoder = png::Encoder::new(&mut png, image.width, image.height);
@@ -213,6 +228,46 @@ fn encode_png(image: &crate::node::RasterImageData) -> Option<Vec<u8>> {
     writer.write_image_data(image.data.data()).ok()?;
     writer.finish().ok()?;
     Some(png)
+}
+
+/// [`parse_svg`] for a checked render. usvg loads an image that an `<image>` or `<feImage>` names through
+/// these two resolvers. A `data:` URL is decoded from memory; an SVG in it is looked at for text and for image
+/// sources of its own before usvg parses it, and usvg forwards the `data:` URLs of a nested SVG here too. Any
+/// other source is a path or URL that usvg would read from disk: it is recorded and never opened.
+#[cfg(feature = "ahcut")]
+fn parse_svg_refusing_external(source: &[u8]) -> Result<crate::node::SvgImageData, usvg::Error> {
+    let embedded = std::sync::Mutex::new(crate::node::SvgRefusals::default());
+    let default_data = usvg::ImageHrefResolver::default_data_resolver();
+    let options = usvg::Options {
+        fontdb: Arc::clone(&*FONT_DB),
+        image_href_resolver: usvg::ImageHrefResolver {
+            resolve_data: Box::new(|mime: &str, data: Arc<Vec<u8>>, options: &usvg::Options| {
+                // The two types usvg tries as SVG.
+                if matches!(mime, "image/svg+xml" | "text/plain")
+                    && let Some(found) = crate::node::SvgRefusals::of_bytes(&data)
+                {
+                    embedded.lock().unwrap().merge(found);
+                }
+                default_data(mime, data, options)
+            }),
+            resolve_string: Box::new(|href: &str, _: &usvg::Options| {
+                embedded
+                    .lock()
+                    .unwrap()
+                    .merge(crate::node::SvgRefusals::external(href));
+                None
+            }),
+        },
+        ..Default::default()
+    };
+    let mut svg = crate::node::SvgImageData::from_data(source, &options)?;
+    drop(options);
+    let embedded = embedded.into_inner().unwrap();
+    svg.text_element = svg.text_element.or(embedded.text_element);
+    if svg.external_image.is_none() {
+        svg.external_image = embedded.external_image;
+    }
+    Ok(svg)
 }
 
 pub trait ToColorColor {

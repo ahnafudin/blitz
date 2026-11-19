@@ -319,6 +319,9 @@ impl BaseDocument {
     ///
     /// Returns `false` if the node owns no stylesheet.
     pub fn set_stylesheet_disabled(&mut self, node_id: NodeId, disabled: bool) -> bool {
+        if self.refuse_frozen_font_stylesheet_mutation() {
+            return false;
+        }
         let Some(sheet) = self.nodes_to_stylesheet.get(&node_id) else {
             return false;
         };
@@ -329,13 +332,16 @@ impl BaseDocument {
         true
     }
 
-    fn stylesheet_loader(&self) -> StylesheetLoader {
+    fn stylesheet_loader(&self, owner: NodeId) -> StylesheetLoader {
         StylesheetLoader {
             tx: self.tx.clone(),
             doc_id: self.id(),
             net_provider: self.net_provider.clone(),
             shell_provider: self.shell_provider.clone(),
             abort_signal: self.abort_signal.clone(),
+            font_loads: self.font_loads.clone(),
+            font_stylesheets: self.font_stylesheets.clone(),
+            owner: Some(owner),
             import_depth: 0,
         }
     }
@@ -449,12 +455,17 @@ impl BaseDocument {
         rule: &str,
         index: usize,
     ) -> Result<usize, CssomError> {
+        if self.refuse_frozen_font_stylesheet_mutation() {
+            return Err(CssomError::NotSupported);
+        }
+        #[cfg(feature = "ahcut")]
+        self.invalidate_filter_stylesheet_provenance(node_id);
         let sheet = self
             .nodes_to_stylesheet
             .get(&node_id)
             .ok_or(CssomError::NotFound)?
             .clone();
-        let loader = self.stylesheet_loader();
+        let loader = self.stylesheet_loader(node_id);
         let lock = &self.guard;
 
         let (ancestors, list) = {
@@ -522,6 +533,7 @@ impl BaseDocument {
                 &self.shell_provider,
                 &guard,
                 self.abort_signal.as_ref(),
+                &self.font_loads,
             );
         }
         let (change_kind, ancestors) = match &list {
@@ -547,6 +559,11 @@ impl BaseDocument {
         path: &[usize],
         index: usize,
     ) -> Result<(), CssomError> {
+        if self.refuse_frozen_font_stylesheet_mutation() {
+            return Err(CssomError::NotSupported);
+        }
+        #[cfg(feature = "ahcut")]
+        self.invalidate_filter_stylesheet_provenance(node_id);
         let sheet = self
             .nodes_to_stylesheet
             .get(&node_id)
@@ -724,6 +741,11 @@ impl BaseDocument {
         value: &str,
         important: bool,
     ) -> Result<(), CssomError> {
+        if self.refuse_frozen_font_stylesheet_mutation() {
+            return Err(CssomError::NotSupported);
+        }
+        #[cfg(feature = "ahcut")]
+        self.invalidate_filter_stylesheet_provenance(node_id);
         if value.trim().is_empty() {
             self.stylesheet_rule_style_remove_property(node_id, path, property)?;
             return Ok(());
@@ -810,6 +832,11 @@ impl BaseDocument {
         path: &[usize],
         property: &str,
     ) -> Result<String, CssomError> {
+        if self.refuse_frozen_font_stylesheet_mutation() {
+            return Err(CssomError::NotSupported);
+        }
+        #[cfg(feature = "ahcut")]
+        self.invalidate_filter_stylesheet_provenance(node_id);
         let (sheet, ancestors, rule, target) = self
             .rule_declaration_target_mut(node_id, path)
             .ok_or(CssomError::NotFound)?;
@@ -864,6 +891,11 @@ impl BaseDocument {
         path: &[usize],
         selectors: &str,
     ) -> Result<(), CssomError> {
+        if self.refuse_frozen_font_stylesheet_mutation() {
+            return Err(CssomError::NotSupported);
+        }
+        #[cfg(feature = "ahcut")]
+        self.invalidate_filter_stylesheet_provenance(node_id);
         let sheet = self
             .nodes_to_stylesheet
             .get(&node_id)
@@ -940,6 +972,11 @@ impl BaseDocument {
         path: &[usize],
         css: &str,
     ) -> Result<(), CssomError> {
+        if self.refuse_frozen_font_stylesheet_mutation() {
+            return Err(CssomError::NotSupported);
+        }
+        #[cfg(feature = "ahcut")]
+        self.invalidate_filter_stylesheet_provenance(node_id);
         let (sheet, ancestors, rule, target) = self
             .rule_declaration_target_mut(node_id, path)
             .ok_or(CssomError::NotFound)?;

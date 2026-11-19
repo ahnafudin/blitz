@@ -611,6 +611,19 @@ fn interface_constructor_globals() {
     );
 }
 
+/// A frozen sheet rejects the script's first mutation. Inspect the same document after the throw.
+#[cfg(feature = "ahcut")]
+fn assert_frozen_stylesheet(mut doc: ScriptDocument, state: &str, expected: &str) {
+    let errors = doc.take_js_errors();
+    assert!(
+        matches!(errors.as_slice(), [error] if error.contains("TypeError: STYLESHEET_REBUILD_REQUIRED:")),
+        "{errors:?}"
+    );
+    doc.eval(&format!("__blitz_send_message(JSON.stringify({state}))"));
+    assert_eq!(doc.take_js_errors(), Vec::<String>::new());
+    assert_eq!(doc.take_messages(), [expected]);
+}
+
 // `document.styleSheets` / `element.sheet` expose stylesheets with a live,
 // mutable `cssRules` list.
 #[test]
@@ -655,6 +668,13 @@ fn cssom_stylesheet_rules() {
         </body></html>
         "##,
     );
+    #[cfg(feature = "ahcut")]
+    assert_frozen_stylesheet(
+        doc,
+        "[document.styleSheets[0].cssRules.length, document.getElementById('second').sheet.cssRules.length]",
+        "[2,0]",
+    );
+    #[cfg(not(feature = "ahcut"))]
     assert_eq!(
         text_of_selector(&doc, "#out"),
         "2|true|true|first|true|0\
@@ -692,6 +712,13 @@ fn cssom_mutations_restyle() {
         </body></html>
         "##,
     );
+    #[cfg(feature = "ahcut")]
+    assert_frozen_stylesheet(
+        doc,
+        "[document.styleSheets[0].cssRules.length, getComputedStyle(document.getElementById('box')).width]",
+        r#"[1,"10px"]"#,
+    );
+    #[cfg(not(feature = "ahcut"))]
     assert_eq!(
         text_of_selector(&doc, "#out"),
         "10px|20px|30px|#box { width: 30px; }|40px|2|10px|0px"
@@ -728,6 +755,16 @@ fn cssom_font_face_and_keyframes() {
         </body></html>
         "##,
     );
+    #[cfg(feature = "ahcut")]
+    assert_frozen_stylesheet(
+        doc,
+        r#"(([face, frames]) => [
+            face.constructor.name, face.style.fontFamily, face.style.getPropertyValue("src").includes("foo.ttf"),
+            Array.from(frames.cssRules, rule => [rule.keyText, rule.style.opacity])
+        ])(document.styleSheets[0].cssRules)"#,
+        r#"["CSSFontFaceRule","Foo",true,[["0%","0"],["100%","1"]]]"#,
+    );
+    #[cfg(not(feature = "ahcut"))]
     assert_eq!(
         text_of_selector(&doc, "#out"),
         "CSSFontFaceRule|5|Foo|true|Foo\

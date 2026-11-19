@@ -80,6 +80,8 @@ pub(crate) struct RuntimeState {
     pub timers: TimerQueue,
     /// The clock driving timer deadlines and `Date`
     pub clock: ScriptClock,
+    /// Origin of high-resolution animation timestamps, on the same driven clock.
+    pub animation_time_origin: Option<web_time::Instant>,
     /// Messages sent from JavaScript to the embedder via the
     /// `__blitz_send_message` native function. Drained with
     /// [`ScriptDocument::take_messages`](crate::ScriptDocument::take_messages).

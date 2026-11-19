@@ -13,6 +13,10 @@ publish = false
 
 [features]
 default = []
+# Opt-in behaviour for an embedder that renders documents deterministically: style sheets are frozen when the
+# ScriptDocument is built (later changes are refused), `document.fonts` tracks declared @font-face loads,
+# and SVG elements get getBBox/getCTM. Without it the script document behaves as upstream.
+ahcut = ["blitz-dom/ahcut"]
 tracing = ["dep:tracing", "blitz-dom/tracing"]
 
 [dependencies]

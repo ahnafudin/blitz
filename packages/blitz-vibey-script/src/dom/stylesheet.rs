@@ -39,12 +39,12 @@ pub(crate) fn register(context: &mut Context) {
         ("__blitz_sheet_style_remove", 3, style_remove_property),
     ];
     for (name, length, body) in fns {
+        #[cfg(feature = "ahcut")]
+        let function = super::font_mutations::guarded_cssom(name, *body);
+        #[cfg(not(feature = "ahcut"))]
+        let function = boa_engine::NativeFunction::from_fn_ptr(*body);
         context
-            .register_global_callable(
-                JsString::from(*name),
-                *length,
-                boa_engine::NativeFunction::from_fn_ptr(*body),
-            )
+            .register_global_callable(JsString::from(*name), *length, function)
             .expect("failed to register CSSOM function");
     }
 }
