@@ -41,6 +41,15 @@ pub(super) const BOOTSTRAP_JS: &str = concat!(
 );
 
 pub(super) fn register_globals(ctx: &DomCtx, base_url: Option<&Url>, context: &mut Context) {
+    #[cfg(feature = "ahcut")]
+    register_global_fn(context, "__blitz_note_dom_toggle", 0, |_, _, context| {
+        crate::dom::dom_ctx(context)?
+            .state
+            .borrow_mut()
+            .sample_hook
+            .record(crate::SampleEffect::DomToggle);
+        Ok(JsValue::undefined())
+    });
     register_global_fn(
         context,
         "__blitz_parse_search_params",

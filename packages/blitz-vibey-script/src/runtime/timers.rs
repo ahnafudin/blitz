@@ -87,6 +87,8 @@ pub(super) fn set_timeout(
     };
     let mut state = ctx.state.borrow_mut();
     let now = state.clock.now();
+    #[cfg(feature = "ahcut")]
+    state.sample_hook.record(crate::SampleEffect::Timer);
     let id = state.timers.add(now, delay, None, callback, rest);
     Ok(JsValue::from(id as f64))
 }
@@ -102,6 +104,8 @@ pub(super) fn set_interval(
     };
     let mut state = ctx.state.borrow_mut();
     let now = state.clock.now();
+    #[cfg(feature = "ahcut")]
+    state.sample_hook.record(crate::SampleEffect::Timer);
     let id = state.timers.add(now, delay, Some(delay), callback, rest);
     Ok(JsValue::from(id as f64))
 }
@@ -122,6 +126,10 @@ pub(super) fn request_animation_frame(
     // Keep the scheduling cadence separate from the timestamp observed at delivery.
     let mut state = ctx.state.borrow_mut();
     let now = state.clock.now();
+    #[cfg(feature = "ahcut")]
+    state
+        .sample_hook
+        .record(crate::SampleEffect::AnimationFrame);
     let id = state.timers.add_animation_frame(now, callback);
     Ok(JsValue::from(id as f64))
 }

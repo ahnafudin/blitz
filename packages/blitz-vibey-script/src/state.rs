@@ -116,6 +116,8 @@ pub(crate) struct RuntimeState {
     /// SplitMix64 state, seeded to zero for each fresh document.
     #[cfg(feature = "ahcut")]
     pub random_state: u64,
+    #[cfg(feature = "ahcut")]
+    pub sample_hook: crate::history::HookObservation,
     /// Messages sent from JavaScript to the embedder via the
     /// `__blitz_send_message` native function. Drained with
     /// [`ScriptDocument::take_messages`](crate::ScriptDocument::take_messages).

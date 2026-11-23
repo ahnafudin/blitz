@@ -48,6 +48,34 @@ pub struct ScriptDocument {
 }
 
 impl ScriptDocument {
+    /// Observe operations during seek, settle and the jobs these hooks trigger.
+    #[cfg(feature = "ahcut")]
+    pub fn begin_sample_hook(&mut self) {
+        self.runtime.ctx.state.borrow_mut().sample_hook.begin();
+    }
+
+    /// Stop observing and return the first effect the host must act on.
+    #[cfg(feature = "ahcut")]
+    pub fn finish_sample_hook(&mut self) -> Option<crate::SampleEffect> {
+        self.runtime.sample_promise = None;
+        self.runtime.ctx.state.borrow_mut().sample_hook.finish()
+    }
+
+    /// Call the page's seek and optional settle hooks at the same stopped instant.
+    #[cfg(feature = "ahcut")]
+    pub fn start_sample(&mut self, seconds: f64) -> Result<(), &'static str> {
+        self.runtime.start_sample(seconds)?;
+        self.request_redraw();
+        self.arm_timer_thread();
+        Ok(())
+    }
+
+    /// Query the native promise after draining work. A rejection enters the normal error queue.
+    #[cfg(feature = "ahcut")]
+    pub fn sample_settled(&mut self) -> Result<bool, &'static str> {
+        self.runtime.sample_settled()
+    }
+
     /// Parse HTML into a [`ScriptDocument`].
     ///
     /// Note: this does *not* execute any scripts yet. Call

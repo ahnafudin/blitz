@@ -1,5 +1,7 @@
     // DOM interface objects (`Node`, `Element`, ...) wired up to the native
     // wrapper prototypes so that constants and `instanceof` checks work.
+    const noteDomToggle = globalThis.__blitz_note_dom_toggle;
+    delete globalThis.__blitz_note_dom_toggle;
     const makeInterface = (name, proto) => {
         const iface = function () {
             throw new TypeError("Illegal constructor");
@@ -77,6 +79,7 @@
                     },
                     toggle(name, force) {
                         name = String(name);
+                        if (force === undefined) noteDomToggle?.();
                         const list = classes();
                         const has = list.includes(name);
                         const shouldHave = force !== undefined ? Boolean(force) : !has;

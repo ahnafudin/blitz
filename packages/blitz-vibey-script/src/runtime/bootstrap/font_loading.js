@@ -1,6 +1,7 @@
 // `document.fonts` for the `ahcut` feature: CSS-declared faces become loaded only after fetch, decode,
 // registration and layout. Evaluated after the bootstrap, replacing its stub.
 (function () {
+    const fontSnapshot = __blitz_font_snapshot;
     // CSS-declared faces become loaded only after fetch, decode, registration and layout.
     const faceRecords = new Map();
     const fontWaiters = [];
@@ -22,7 +23,7 @@
     }
     function refreshFonts(requested) {
         const waiting = fontWaiters.filter(waiter => waiter.font);
-        const snapshot = __blitz_font_snapshot(requested, waiting.map(waiter => waiter.font));
+        const snapshot = fontSnapshot(requested, waiting.map(waiter => waiter.font));
         const waitingIds = new Map(waiting.map((waiter, index) => [waiter, snapshot.waiterIds[index]]));
         const present = new Set();
         for (const data of snapshot.faces) {
@@ -95,5 +96,5 @@
         },
     };
     document.fonts = fontFaceSet;
-    globalThis.__blitz_poll_fonts = () => refreshFonts().changed;
+    return () => refreshFonts().changed;
 })();

@@ -34,6 +34,8 @@ mod document;
 mod dom;
 mod event_handler;
 mod fetch;
+#[cfg(feature = "ahcut")]
+mod history;
 mod inner_text;
 #[cfg(feature = "ahcut")]
 mod refusal;
@@ -43,5 +45,7 @@ mod timers;
 
 pub use document::ScriptDocument;
 pub use fetch::{DefaultScriptFetcher, FetchError, ScriptFetcher, document_may_load};
+#[cfg(feature = "ahcut")]
+pub use history::SampleEffect;
 #[cfg(feature = "ahcut")]
 pub use state::UncaughtScriptError;

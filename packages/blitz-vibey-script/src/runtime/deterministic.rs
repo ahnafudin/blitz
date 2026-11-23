@@ -75,6 +75,7 @@ fn empty_entries(_: &JsValue, _: &[JsValue], context: &mut Context) -> JsResult<
 fn random(_: &JsValue, _: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
     let ctx = dom_ctx(context)?;
     let mut state = ctx.state.borrow_mut();
+    state.sample_hook.record(crate::SampleEffect::Random);
     state.random_state = state.random_state.wrapping_add(0x9e3779b97f4a7c15);
     let mut value = state.random_state;
     value = (value ^ (value >> 30)).wrapping_mul(0xbf58476d1ce4e5b9);

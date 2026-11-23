@@ -32,6 +32,8 @@ pub(crate) mod image_events;
 #[cfg(feature = "ahcut")]
 pub(crate) mod images;
 mod modules;
+#[cfg(feature = "ahcut")]
+mod sample;
 mod timers;
 mod window;
 
@@ -63,6 +65,10 @@ pub(crate) struct ScriptRuntime {
     pub context: Context,
     pub ctx: DomCtx,
     module_loader: Rc<BlitzModuleLoader>,
+    #[cfg(feature = "ahcut")]
+    pub(crate) sample_promise: Option<boa_engine::object::builtins::JsPromise>,
+    #[cfg(feature = "ahcut")]
+    font_poll: Option<boa_engine::object::JsObject>,
 }
 
 impl ScriptRuntime {
@@ -132,6 +138,10 @@ impl ScriptRuntime {
             context,
             ctx,
             module_loader,
+            #[cfg(feature = "ahcut")]
+            sample_promise: None,
+            #[cfg(feature = "ahcut")]
+            font_poll: None,
         };
 
         // Install JavaScript APIs after the native bindings.
@@ -139,7 +149,15 @@ impl ScriptRuntime {
         #[cfg(feature = "ahcut")]
         images::install(&runtime.ctx, &mut runtime.context);
         #[cfg(feature = "ahcut")]
-        runtime.eval_internal(bootstrap::FONT_LOADING_JS, "<blitz-font-loading>");
+        match runtime
+            .context
+            .eval(Source::from_bytes(bootstrap::FONT_LOADING_JS))
+        {
+            Ok(callback) => runtime.font_poll = callback.as_callable(),
+            Err(error) => {
+                report_js_error(&runtime.ctx, &mut runtime.context, "font loading", &error)
+            }
+        }
         runtime.eval_internal(GEOMETRY_JS, "<blitz-geometry>");
 
         runtime
@@ -170,9 +188,10 @@ impl ScriptRuntime {
     /// Pump real font completions even when virtual time has not advanced.
     #[cfg(feature = "ahcut")]
     pub fn poll_font_loads(&mut self) -> bool {
-        match self.context.eval(Source::from_bytes(
-            "typeof __blitz_poll_fonts === 'function' && __blitz_poll_fonts()",
-        )) {
+        let Some(poll) = &self.font_poll else {
+            return false;
+        };
+        match poll.call(&boa_engine::JsValue::undefined(), &[], &mut self.context) {
             Ok(changed) => changed.to_boolean(),
             Err(error) => {
                 report_js_error(&self.ctx, &mut self.context, "font completion", &error);
