@@ -229,6 +229,20 @@ fn a_box_beyond_the_source_clip_can_cast_a_shadow_into_it() {
 }
 
 #[test]
+fn an_offscreen_parent_does_not_cull_a_descendant_blur_touching_the_viewport() {
+    let scene = paint_html(
+        "<!doctype html><style>body{margin:0}
+        #parent{position:absolute;left:245px;top:30px;width:6px;height:8px}
+        #source{width:6px;height:8px;filter:blur(4px);background:red}
+        </style><div id=parent><div id=source></div></div>",
+        1.0,
+    )
+    .unwrap();
+    assert!(scene.commands.iter().any(|command| matches!(command,
+        RenderCommand::PushLayer(layer) if layer.filter.is_some())));
+}
+
+#[test]
 fn unsupported_filter_members_keep_the_whole_list_refusal() {
     for value in [
         "contrast(2)",
