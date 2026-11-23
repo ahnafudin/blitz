@@ -3,8 +3,9 @@
 
 use anyrender::Scene;
 use blitz_dom::{
-    DocumentConfig,
+    BaseDocument, DocumentConfig, ImageSelectionStatus, NodeId, QualName, local_name,
     node::{ImageData, Status},
+    ns,
 };
 use blitz_html::HtmlDocument;
 use blitz_traits::{
@@ -32,13 +33,141 @@ struct Pictures {
 impl NetProvider for Pictures {
     fn image_facts(&self, _: usize, url: &Url) -> Result<Option<ImageFacts>, String> {
         self.lookups.lock().unwrap().push(url.path().into());
-        Ok(Some(FACTS))
+        match url.path() {
+            "/missing" => Err("ASSET_MISSING:choose a project image".into()),
+            "/zero" => Ok(Some(ImageFacts { width: 0, ..FACTS })),
+            "/fallback.svg" | "/fallback.png" | "/bad-bytes" => Ok(None),
+            _ => Ok(Some(FACTS)),
+        }
     }
 
     fn fetch(&self, _: usize, request: Request, handler: Box<dyn NetHandler>) {
         self.bytes.fetch_add(1, Ordering::Relaxed);
-        handler.error(request.url.into(), "unexpected byte ask".into());
+        if request.url.path() == "/fallback.svg" {
+            handler.bytes(
+                request.url.into(),
+                blitz_traits::net::Bytes::from_static(
+                    br#"<svg xmlns="http://www.w3.org/2000/svg" width="5" height="8"/>"#,
+                ),
+            );
+        } else if request.url.path() == "/fallback.png" {
+            let mut png = std::io::Cursor::new(Vec::new());
+            image::RgbaImage::from_pixel(2, 3, image::Rgba([17, 23, 42, 255]))
+                .write_to(&mut png, image::ImageFormat::Png)
+                .unwrap();
+            handler.bytes(request.url.into(), png.into_inner().into());
+        } else {
+            handler.error(request.url.into(), "byte request failed".into());
+        }
     }
+}
+
+#[test]
+fn selected_image_completion_covers_reselection_cache_failure_and_detached_elements() {
+    let pictures = Arc::new(Pictures::default());
+    let mut doc = HtmlDocument::from_html(
+        "<!doctype html><body><img id=a><img id=b></body>",
+        DocumentConfig {
+            base_url: Some("https://assets.invalid/".into()),
+            net_provider: Some(pictures.clone()),
+            ..DocumentConfig::default()
+        },
+    );
+    let a = doc.get_element_by_id("a").unwrap();
+    let b = doc.get_element_by_id("b").unwrap();
+    let detached = doc
+        .mutate()
+        .create_element(QualName::new(None, ns!(html), local_name!("img")), vec![]);
+    let src = QualName::new(None, ns!(), local_name!("src"));
+    let select = |doc: &mut BaseDocument, id: NodeId, url: &str| {
+        doc.mutate().set_attribute(id, src.clone(), url);
+        doc.image_selection(id).unwrap().token
+    };
+    assert!(doc.image_selection(a).is_none());
+    select(&mut doc, a, "missing");
+    let latest = select(&mut doc, a, "shared.png");
+    let peer = select(&mut doc, b, "shared.png");
+    let detached_token = select(&mut doc, detached, "shared.png");
+    assert_eq!(
+        doc.image_selection(a).unwrap().status,
+        ImageSelectionStatus::Pending
+    );
+    assert!(doc.pop_image_completion().is_none());
+    doc.handle_messages();
+    assert_eq!(doc.pop_image_completion(), Some((a, latest)));
+    // Replace an already queued completion before its callback can run.
+    let failed = select(&mut doc, b, "zero");
+    assert_ne!(peer, failed);
+    assert_eq!(doc.pop_image_completion(), Some((detached, detached_token)));
+    assert!(doc.pop_image_completion().is_none());
+    doc.handle_messages();
+    assert_eq!(doc.pop_image_completion(), Some((b, failed)));
+    assert!(
+        matches!(&doc.image_selection(b).unwrap().status,ImageSelectionStatus::Failed(error) if error.starts_with("IMAGE_REFUSED:"))
+    );
+    assert!(
+        doc.get_node(b)
+            .unwrap()
+            .element_data()
+            .unwrap()
+            .image_data()
+            .is_none()
+    );
+
+    let cached = select(&mut doc, b, "shared.png");
+    assert_eq!(
+        doc.image_selection(b).unwrap().status,
+        ImageSelectionStatus::Loaded
+    );
+    assert_eq!(doc.pop_image_completion(), Some((b, cached)));
+    assert!(doc.pop_image_completion().is_none());
+    assert_eq!(
+        *pictures.lookups.lock().unwrap(),
+        ["/missing", "/shared.png", "/zero"]
+    );
+    assert_eq!(pictures.bytes.load(Ordering::Relaxed), 0);
+    let cleared = select(&mut doc, b, "shared.png");
+    assert_ne!(cleared, cached);
+    doc.mutate().clear_attribute(b, src.clone());
+    assert!(doc.image_selection(b).is_none());
+    assert!(doc.pop_image_completion().is_none());
+
+    for (url, reason) in [
+        ("missing", "ASSET_MISSING:choose a project image"),
+        ("bad-bytes", "byte request failed"),
+    ] {
+        let token = select(&mut doc, b, url);
+        doc.handle_messages();
+        assert_eq!(doc.pop_image_completion(), Some((b, token)));
+        assert_eq!(
+            doc.image_selection(b).unwrap().status,
+            ImageSelectionStatus::Failed(reason.into())
+        );
+    }
+    let svg = select(&mut doc, b, "fallback.svg");
+    doc.handle_messages();
+    assert_eq!(doc.pop_image_completion(), Some((b, svg)));
+    assert!(matches!(
+        doc.get_node(b)
+            .unwrap()
+            .element_data()
+            .unwrap()
+            .image_data(),
+        Some(ImageData::Svg(_))
+    ));
+    let raster = select(&mut doc, b, "fallback.png");
+    doc.handle_messages();
+    assert_eq!(doc.pop_image_completion(), Some((b, raster)));
+    let image = doc
+        .get_node(b)
+        .unwrap()
+        .element_data()
+        .unwrap()
+        .image_data()
+        .unwrap();
+    assert!(matches!(image, ImageData::Raster(_)));
+    assert_eq!(image.intrinsic_raster_size(), Some((2, 3)));
+    assert_eq!(pictures.bytes.load(Ordering::Relaxed), 3);
 }
 
 #[test]

@@ -102,6 +102,38 @@ fn document() -> ScriptDocument {
     doc
 }
 
+#[test]
+fn linked_and_imported_css_use_the_stylesheet_encoding_for_admission() {
+    struct Sheets;
+    impl NetProvider for Sheets {
+        fn fetch(&self, _: usize, request: Request, handler: Box<dyn NetHandler>) {
+            let bytes = match request.url.path() {
+                "/root.css" => b"@import 'motion.css';".to_vec(),
+                "/motion.css" => std::iter::once(0xfeffu16)
+                    .chain("@keyframes unused{to{opacity:1}}".encode_utf16())
+                    .flat_map(u16::to_le_bytes)
+                    .collect(),
+                path => panic!("unexpected URL {path}"),
+            };
+            handler.bytes(request.url.into(), bytes.into());
+        }
+    }
+    let config = DocumentConfig {
+        base_url: Some("https://assets.invalid/".into()),
+        net_provider: Some(Arc::new(Sheets)),
+        ..Default::default()
+    };
+    let mut doc = ScriptDocument::from_html(
+        "<!doctype html><head><link rel='stylesheet' href='root.css'></head><body>text</body>",
+        config,
+    );
+    doc.inner_mut().resolve(0.);
+    assert_eq!(
+        doc.inner().script_style_refusal(),
+        Some("CSS_KEYFRAMES_REFUSED:write the animation on the timeline in __seek")
+    );
+}
+
 /// What an expression gives, as JSON; what it throws, as `ERROR <text>`.
 fn observe(doc: &mut ScriptDocument, expression: &str) -> String {
     doc.eval(&format!(

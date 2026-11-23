@@ -1056,6 +1056,7 @@ dependencies = [
  "blitz-traits",
  "bytemuck",
  "color",
+ "image",
  "kurbo",
  "parley",
  "peniko",
