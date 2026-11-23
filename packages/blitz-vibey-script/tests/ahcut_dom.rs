@@ -150,6 +150,25 @@ fn a_script_inserted_by_script_is_refused_at_the_call_before_the_tree_changes() 
 }
 
 #[test]
+fn repeated_nodes_move_to_the_end_and_fragments_empty_on_their_first_use() {
+    let mut doc = document();
+    let observed = observe(
+        &mut doc,
+        r#"(()=>{
+        const target=document.createElement('div'), fragment=document.createDocumentFragment();
+        const [a,b,c]=['a','b','c'].map(name=>document.createElement(name));
+        const order=()=>Array.from(target.children,n=>n.localName).join('');
+        fragment.append(a,b); target.append(fragment,c,fragment); const first=order();
+        target.replaceChildren(a,b,a); const second=order();
+        fragment.append(a,b); target.replaceChildren(b,fragment,c); const third=order();
+        fragment.append(a,b); target.replaceChildren(fragment,{toString(){a.remove();return 'text'}});
+        return [first,second,third,order(),target.textContent,fragment.childNodes.length];
+    })()"#,
+    );
+    assert_eq!(observed, r#"["abc","ba","bac","b","text",0]"#);
+}
+
+#[test]
 fn reflected_html_strings_and_direction_track_the_content_attribute() {
     let mut doc = ScriptDocument::from_html(
         "<!doctype html><head><link rel='icon' media='print'></head><body></body>",
