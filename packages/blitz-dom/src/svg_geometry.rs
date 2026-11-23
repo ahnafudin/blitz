@@ -94,13 +94,15 @@ impl BaseDocument {
         };
         #[cfg(feature = "ahcut")]
         let geometry_budget = self.svg_image_budget.as_ref().map(|budget| {
-            let drawn = viewport
-                .element_data()
-                .and_then(|element| element.image_data());
-            let lease = match drawn {
-                Some(crate::node::ImageData::Svg(svg)) => svg.reservation.as_deref(),
-                _ => None,
-            };
+            // A nested viewport is serialized in its outermost inline SVG's rendered tree.
+            let lease = std::iter::successors(Some(viewport), |node| self.get_node(node.parent?))
+                .map_while(|node| node.element_data().filter(|el| el.name.ns == ns!(svg)))
+                .filter(|el| el.name.local == local_name!("svg"))
+                .filter_map(|el| match el.image_data() {
+                    Some(crate::node::ImageData::Svg(svg)) => svg.reservation.as_deref(),
+                    _ => None,
+                })
+                .last();
             budget.for_geometry(lease)
         });
         let parsed = crate::util::parse_svg(

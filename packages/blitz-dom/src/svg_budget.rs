@@ -1,5 +1,6 @@
 //! Limits for the embedded images of one checked document. A tree owns its cache reservation.
 
+use std::borrow::Cow;
 use std::sync::{Arc, Mutex};
 
 /// Limits supplied by the embedder in bytes, pixels and nested SVG documents.
@@ -29,8 +30,7 @@ struct State {
 
 pub(crate) const SOURCE: &str = "LIMIT_EXCEEDED:limit.file.bytes: reduce the embedded image source";
 pub(crate) const PIXELS: &str = "LIMIT_EXCEEDED:limit.image.pixels: resize the embedded raster";
-pub(crate) const EDGE: &str =
-    "LIMIT_EXCEEDED:limit.image.edge: resize the image to at most 32768 pixels on each edge";
+const EDGE: &str = "LIMIT_EXCEEDED:limit.image.edge: resize the image to fit the edge limit";
 pub(crate) const NESTING: &str =
     "LIMIT_EXCEEDED:limit.svg.image.nesting: flatten the nested SVG images";
 pub(crate) const CACHE: &str = "LIMIT_EXCEEDED:limit.worker.asset-cache.bytes: reduce the embedded images or the other project assets";
@@ -48,7 +48,17 @@ impl SvgImageBudget {
     }
 
     /// First refusal in this document, including failed parses that produced no drawable tree.
-    pub fn refusal(&self) -> Option<&'static str> {
+    pub fn refusal(&self) -> Option<Cow<'static, str>> {
+        self.summary().map(|reason| match reason {
+            EDGE => Cow::Owned(format!(
+                "LIMIT_EXCEEDED:limit.image.edge: resize the image to at most {} pixels on each edge",
+                self.limits.raster_edge
+            )),
+            other => Cow::Borrowed(other),
+        })
+    }
+
+    pub(crate) fn summary(&self) -> Option<&'static str> {
         self.state.lock().unwrap().refusal
     }
 
@@ -139,7 +149,7 @@ impl<'a> CheckedParse<'a> {
             self.budget.refuse(SOURCE);
             return false;
         }
-        self.budget.refusal().is_none()
+        self.budget.summary().is_none()
     }
 
     pub(crate) fn charge_raster(&self, data: &[u8]) -> Option<()> {

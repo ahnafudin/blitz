@@ -22,7 +22,7 @@ fn geometry_reads_and_a_tween_rebuild_can_reuse_the_rendered_svg_allowance() {
         5,
     );
     // A 1x1 PNG uses four RGBA bytes, more than half the remaining allowance.
-    let html = r#"<svg width="32" height="16" xmlns="http://www.w3.org/2000/svg"><image width="4" height="4" href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+j6B8AAAAASUVORK5CYII="/><rect id="box" width="4" height="4"/></svg>"#;
+    let html = r#"<svg width="32" height="16" xmlns="http://www.w3.org/2000/svg"><rect id="outer" width="3" height="2"/><svg width="16" height="16"><image width="4" height="4" href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+j6B8AAAAASUVORK5CYII="/><rect id="box" width="4" height="4"/></svg></svg>"#;
     let mut doc = ScriptDocument::from_html(
         html,
         DocumentConfig {
@@ -35,12 +35,16 @@ fn geometry_reads_and_a_tween_rebuild_can_reuse_the_rendered_svg_allowance() {
         &mut doc,
         r#"(() => {
         const box = document.getElementById("box");
+        const outer = document.getElementById("outer").getBBox().width;
         const before = box.getBBox().width;
         box.setAttribute("width", "6");
-        return [before, box.getBBox().width, box.getCTM().a];
+        const result = [outer, before, box.getBBox().width, box.getCTM().a];
+        box.setAttribute("width", "8");
+        return result;
     })()"#,
     );
-    assert_eq!(bounds, "[4,6,1]");
+    assert_eq!(bounds, "[3,4,6,1]");
+    doc.inner_mut().resolve(0.0);
     assert_eq!(budget.refusal(), None);
 }
 

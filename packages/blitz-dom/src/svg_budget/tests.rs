@@ -39,14 +39,14 @@ fn the_root_and_one_embedded_svg_are_admitted_and_a_third_document_is_refused() 
     let _allowed = parse_svg_refusing_external(nested(&leaf).as_bytes(), Some(&limits)).unwrap();
     assert_eq!(limits.refusal(), None);
     let _ = parse_svg_refusing_external(nested(&nested(&leaf)).as_bytes(), Some(&limits));
-    assert_eq!(limits.refusal(), Some(NESTING));
+    assert_eq!(limits.refusal().as_deref(), Some(NESTING));
 }
 
 #[test]
 fn raster_pixels_are_checked_before_paint() {
     let limits = budget(4096, 0, 4096);
     let _ = parse_svg_refusing_external(image(PNG).as_bytes(), Some(&limits));
-    assert_eq!(limits.refusal(), Some(PIXELS));
+    assert_eq!(limits.refusal().as_deref(), Some(PIXELS));
 }
 
 #[test]
@@ -54,7 +54,10 @@ fn a_raster_that_fits_the_area_can_exceed_the_edge() {
     let mut limits = budget(4096, 1, 4);
     limits.limits.raster_edge = 0;
     let _ = parse_svg_refusing_external(image(PNG).as_bytes(), Some(&limits));
-    assert_eq!(limits.refusal(), Some(super::EDGE));
+    assert_eq!(
+        limits.refusal().as_deref(),
+        Some("LIMIT_EXCEEDED:limit.image.edge: resize the image to at most 0 pixels on each edge")
+    );
 }
 
 #[test]
@@ -80,7 +83,7 @@ fn image_trees_share_the_allowance_and_clones_hold_their_reservation() {
     assert_eq!(limits.available(), 4);
     let held = parse_svg_refusing_external(image(PNG).as_bytes(), Some(&limits)).unwrap();
     let _ = parse_svg_refusing_external(image(PNG).as_bytes(), Some(&limits));
-    assert_eq!(limits.refusal(), Some(CACHE));
+    assert_eq!(limits.refusal().as_deref(), Some(CACHE));
     drop(held);
 }
 
@@ -89,7 +92,7 @@ fn source_bytes_have_their_own_limit() {
     let source = image(PNG);
     let limits = budget(source.len() as u64 - 1, 1, 4096);
     let _ = parse_svg_refusing_external(source.as_bytes(), Some(&limits));
-    assert_eq!(limits.refusal(), Some(SOURCE));
+    assert_eq!(limits.refusal().as_deref(), Some(SOURCE));
 }
 
 #[test]
@@ -123,11 +126,11 @@ fn compressed_xml_is_bounded_by_its_expanded_length() {
     assert!(compressed.len() < xml.len() - 1);
     let limits = budget(compressed.len() as u64 - 1, 1, 4096);
     assert!(parse_svg_refusing_external(&compressed, Some(&limits)).is_err());
-    assert_eq!(limits.refusal(), Some(SOURCE));
+    assert_eq!(limits.refusal().as_deref(), Some(SOURCE));
 
     let limits = budget(xml.len() as u64, 1, xml.len() as u64 - 1);
     assert!(parse_svg_refusing_external(&compressed, Some(&limits)).is_err());
-    assert_eq!(limits.refusal(), Some(CACHE));
+    assert_eq!(limits.refusal().as_deref(), Some(CACHE));
     let limits = budget(compressed.len() as u64, 1, xml.len() as u64);
     let parsed = parse_svg_refusing_external(&compressed, Some(&limits)).unwrap();
     assert_eq!(limits.refusal(), None);
