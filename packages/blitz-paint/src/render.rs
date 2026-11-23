@@ -529,6 +529,26 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
             y: -self.initial_y,
         }) * transform;
         let screen_bbox = screen_transform.transform_rect_bbox(overflow.union(border_box));
+        #[cfg(feature = "ahcut")]
+        let css_blur = self
+            .checked_filters
+            .then(|| {
+                filter_effects::CssBlur::from_css(
+                    &effects.filter.0,
+                    self.scale,
+                    screen_transform,
+                    clip_rect,
+                )
+            })
+            .flatten();
+        #[cfg(feature = "ahcut")]
+        let (filter_outer_decoration, clip_rect) = match css_blur {
+            Some(_) if screen_transform.determinant() == 0.0 => return,
+            Some(blur) => (true, blur.source_clip),
+            None => (false, clip_rect),
+        };
+        #[cfg(not(feature = "ahcut"))]
+        let filter_outer_decoration = false;
 
         // Cull elements that fall entirely outside the current clip rectangle. In addition to
         // the viewport, `clip_rect` is narrowed by any ancestor scrollport (see below), so this
@@ -642,9 +662,8 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
 
         let paints_own_box = !node.is_inline_with_only_block_children();
 
-        cx.draw_outline(scene);
-        if paints_own_box {
-            cx.draw_outset_box_shadow(scene);
+        if !filter_outer_decoration {
+            cx.draw_outer_decoration(scene, paints_own_box);
         }
 
         // clip-path clip ayer
@@ -676,6 +695,7 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
                         border_box,
                         &effects.filter.0,
                         &effects.backdrop_filter.0,
+                        css_blur,
                     )
                 } else {
                     (filter, backdrop_filter)
@@ -718,6 +738,9 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
                     filter,
                     backdrop_filter,
                     |scene| {
+                        if filter_outer_decoration {
+                            cx.draw_outer_decoration(scene, paints_own_box);
+                        }
                         if paints_own_box {
                             cx.draw_background(scene);
                             cx.draw_inset_box_shadow(scene);
@@ -935,6 +958,13 @@ fn convert_rect(rect: &parley::BoundingBox) -> kurbo::Rect {
 }
 
 impl ElementCx<'_, '_> {
+    fn draw_outer_decoration(&self, scene: &mut impl PaintScene, paints_own_box: bool) {
+        self.draw_outline(scene);
+        if paints_own_box {
+            self.draw_outset_box_shadow(scene);
+        }
+    }
+
     /// Paint overlay scrollbar thumbs for scroll containers: `overflow:
     /// scroll`, or `auto` when the content overflows (never `hidden`/`clip`,
     /// which scroll only programmatically). Thumbs appear on scroll and fade

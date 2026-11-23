@@ -12,7 +12,7 @@ fn paint(filter: &str, scale: f64) -> Result<Scene, FilterError> {
     let html = format!(
         "<!doctype html><style>body{{margin:0}}
          #target{{position:absolute;left:20px;top:32px;width:24px;height:12px;
-         background:red;filter:{filter}}}
+         background:red;box-shadow:0 1px 3px blue;filter:{filter}}}
          #child{{position:absolute;left:46px;top:2px;width:6px;height:6px;background:lime}}
          </style><div id=target><div id=child></div></div>"
     );
@@ -63,6 +63,34 @@ fn blur_zero_and_the_css_default_do_not_refuse_paint() {
     for filter in ["blur(0px)", "blur()"] {
         assert!(paint(filter, 1.0).is_ok(), "{filter}");
     }
+}
+
+#[test]
+fn the_outer_shadow_is_part_of_the_css_filters_source() {
+    let scene = paint("blur(4px)", 1.0).unwrap();
+    let mut filters = Vec::new();
+    let mut shadow_count = 0;
+    for command in scene.commands {
+        match command {
+            RenderCommand::PushLayer(layer) => filters.push(layer.filter.is_some()),
+            RenderCommand::PushClipLayer(_) | RenderCommand::PushMaskLayer(_) => {
+                filters.push(false)
+            }
+            RenderCommand::PopLayer => {
+                filters.pop().expect("balanced layers");
+            }
+            RenderCommand::BoxShadow(_) => {
+                assert!(
+                    filters.contains(&true),
+                    "shadow painted outside the CSS blur"
+                );
+                shadow_count += 1;
+            }
+            _ => {}
+        }
+    }
+    assert_eq!(shadow_count, 1);
+    assert!(filters.is_empty());
 }
 
 #[test]
