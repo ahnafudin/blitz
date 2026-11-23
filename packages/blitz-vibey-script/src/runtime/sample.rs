@@ -14,6 +14,7 @@ impl ScriptRuntime {
         // Use a fresh intrinsic promise, including for a returned thenable. Neither this
         // promise nor its resolving functions are installed on an author-visible object.
         let (promise, resolvers) = JsPromise::new_pending(&mut self.context);
+        self.own_promise(&promise, super::rejections::PromiseOwner::Sample);
         self.sample_promise = Some(promise);
         let adopted = self.call_sample_hooks(seconds).and_then(|value| {
             resolvers

@@ -224,3 +224,72 @@ fn runtime_owned_module_and_sample_rejections_have_one_report() {
         doc.finish_sample_hook();
     }
 }
+
+#[test]
+fn module_rejections_are_errors_at_immediate_and_later_checkpoints() {
+    for delayed in [false, true] {
+        let wait = if delayed {
+            "await new Promise(resolve => { globalThis.resumeModule = resolve });"
+        } else {
+            ""
+        };
+        for (fail, expected) in [
+            ("throw Error('module failed')", None),
+            ("decline()", Some("MODULE:use another value")),
+        ] {
+            let html = format!("<body><script type='module'>{wait} {fail}</script></body>");
+            let mut doc = ScriptDocument::from_html(&html, Default::default());
+            doc.install_host_sdk(
+                "make => { globalThis.decline = () => { throw make('MODULE:use another value') } }",
+            );
+            doc.execute_scripts();
+            if delayed {
+                assert!(doc.take_uncaught_errors().is_empty());
+                assert!(doc.take_rejection_warnings().is_none());
+                doc.eval("resumeModule()");
+            }
+            let errors = doc.take_uncaught_errors();
+            assert_eq!(errors.len(), 1, "{fail}, delayed={delayed}: {errors:?}");
+            assert!(errors[0].message.contains("<inline module>"), "{errors:?}");
+            assert_eq!(errors[0].refusal.as_deref(), expected);
+            doc.eval("0");
+            assert!(doc.take_uncaught_errors().is_empty());
+            assert!(doc.take_rejection_warnings().is_none());
+        }
+    }
+}
+
+#[test]
+fn a_late_rejection_from_an_abandoned_sample_leaves_the_next_sample_alone() {
+    for reason in ["Error('late sample')", "taggedReason"] {
+        let mut doc = document();
+        doc.install_host_sdk(
+            "make => { globalThis.taggedReason = make('SAMPLE:use another value') }",
+        );
+        doc.eval("function __seek() {} globalThis.__settle = () => new Promise((_, reject) => { globalThis.rejectOld = reject })");
+        doc.begin_sample_hook();
+        doc.start_sample(0.0).unwrap();
+        assert!(!doc.sample_settled().unwrap());
+        // The host has failed the request at its deadline and ends observation.
+        doc.finish_sample_hook();
+        doc.eval("globalThis.__settle = () => new Promise((_, reject) => { globalThis.rejectCurrent = reject })");
+        doc.begin_sample_hook();
+        doc.start_sample(1.0).unwrap();
+        doc.eval(&format!("rejectOld({reason})"));
+        assert!(!doc.sample_settled().unwrap());
+        assert!(doc.take_uncaught_errors().is_empty());
+        assert!(doc.take_rejection_warnings().is_none());
+        doc.eval("rejectCurrent(taggedReason); Promise.reject('ordinary page warning')");
+        assert!(doc.sample_settled().unwrap());
+        let errors = doc.take_uncaught_errors();
+        assert_eq!(errors.len(), 1);
+        assert_eq!(
+            errors[0].refusal.as_deref(),
+            Some("SAMPLE:use another value")
+        );
+        let (message, count) = doc.take_rejection_warnings().unwrap();
+        assert_eq!(count, 1);
+        assert!(message.contains("ordinary page warning"));
+        doc.finish_sample_hook();
+    }
+}

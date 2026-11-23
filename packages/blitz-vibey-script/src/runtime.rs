@@ -75,6 +75,8 @@ pub(crate) struct ScriptRuntime {
     pub(super) host_sdk: Option<boa_engine::object::JsObject>,
     #[cfg(feature = "ahcut")]
     rejections: Rc<rejections::Rejections>,
+    #[cfg(feature = "ahcut")]
+    promise_owners: boa_engine::object::builtins::JsWeakMap,
 }
 
 impl ScriptRuntime {
@@ -143,6 +145,8 @@ impl ScriptRuntime {
         #[cfg(feature = "ahcut")]
         deterministic::install(epoch, &mut context);
 
+        #[cfg(feature = "ahcut")]
+        let promise_owners = boa_engine::object::builtins::JsWeakMap::new(&mut context);
         let mut runtime = Self {
             context,
             ctx,
@@ -155,6 +159,8 @@ impl ScriptRuntime {
             host_sdk: None,
             #[cfg(feature = "ahcut")]
             rejections,
+            #[cfg(feature = "ahcut")]
+            promise_owners,
         };
 
         // Install JavaScript APIs after the native bindings.
@@ -211,17 +217,13 @@ impl ScriptRuntime {
 
     /// Run pending promise jobs (microtasks)
     pub fn run_jobs(&mut self, description: &str) {
-        self.drain_jobs(description);
-        #[cfg(feature = "ahcut")]
-        self.finish_rejections(None);
-    }
-
-    fn drain_jobs(&mut self, description: &str) {
         #[cfg(feature = "ahcut")]
         self.poll_font_loads();
         if let Err(error) = self.context.run_jobs() {
             report_js_error(&self.ctx, &mut self.context, description, &error);
         }
+        #[cfg(feature = "ahcut")]
+        self.finish_rejections();
     }
 
     /// Pump real font completions even when virtual time has not advanced.

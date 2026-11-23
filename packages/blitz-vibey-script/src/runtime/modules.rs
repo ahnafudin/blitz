@@ -5,6 +5,7 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::rc::Rc;
 
+#[cfg(not(feature = "ahcut"))]
 use boa_engine::builtins::promise::PromiseState;
 use boa_engine::module::{Module, ModuleLoader, ModuleRequest, Referrer};
 use boa_engine::{Context, JsError, JsNativeError, JsResult, Source};
@@ -119,9 +120,13 @@ impl ScriptRuntime {
         }
 
         let promise = module.load_link_evaluate(&mut self.context);
-        self.drain_jobs(&description);
         #[cfg(feature = "ahcut")]
-        self.finish_rejections(Some(&promise));
+        self.own_promise(
+            &promise,
+            super::rejections::PromiseOwner::Module(&description),
+        );
+        self.run_jobs(&description);
+        #[cfg(not(feature = "ahcut"))]
         if let PromiseState::Rejected(reason) = promise.state() {
             report_js_error(
                 &self.ctx,
