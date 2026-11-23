@@ -21,6 +21,8 @@ use modules::BlitzModuleLoader;
 
 mod bootstrap;
 mod css;
+#[cfg(feature = "ahcut")]
+mod deterministic;
 mod events;
 mod fetch;
 #[cfg(feature = "ahcut")]
@@ -81,9 +83,12 @@ impl ScriptRuntime {
         // Share the runtime's clock with boa so that `Date` observes the same
         // (possibly virtual) time as timers
         let clock = ctx.state.borrow().clock.clone();
+        let clock = crate::clock::BoaClockAdapter::new(clock);
+        #[cfg(feature = "ahcut")]
+        let epoch = clock.base_system_millis;
         let mut context = Context::builder()
             .module_loader(module_loader.clone())
-            .clock(Rc::new(crate::clock::BoaClockAdapter::new(clock)))
+            .clock(Rc::new(clock))
             .build()
             .expect("failed to build JS context");
         context.insert_data(ctx.clone());
@@ -116,6 +121,8 @@ impl ScriptRuntime {
         crate::dom::init_protos(&ctx, &mut context);
 
         bootstrap::register_globals(&ctx, base_url, &mut context);
+        #[cfg(feature = "ahcut")]
+        deterministic::install(epoch, &mut context);
 
         let mut runtime = Self {
             context,

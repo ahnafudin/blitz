@@ -23,20 +23,12 @@ impl ScriptRuntime {
         if due.is_empty() {
             return false;
         }
-        let animation_timestamp = {
-            let state = self.ctx.state.borrow();
-            state
-                .clock
-                .now()
-                .saturating_duration_since(
-                    state
-                        .animation_time_origin
-                        .expect("runtime clock origin initialised"),
-                )
-                .as_secs_f64()
-                * 1000.0
-        };
+        let animation_timestamp = self.ctx.state.borrow().elapsed_millis();
         for mut timer in due {
+            #[cfg(feature = "ahcut")]
+            if !self.ctx.state.borrow_mut().timers.begin_delivery(timer.id) {
+                continue;
+            }
             if timer.animation_frame {
                 timer.args = vec![JsValue::from(animation_timestamp)];
             }
@@ -47,7 +39,10 @@ impl ScriptRuntime {
             {
                 report_js_error(&self.ctx, &mut self.context, "timer callback", &error);
             }
+            #[cfg(feature = "ahcut")]
+            self.run_jobs("timer microtasks");
         }
+        #[cfg(not(feature = "ahcut"))]
         self.run_jobs("timer microtasks");
         true
     }

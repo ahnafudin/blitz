@@ -18,6 +18,9 @@ pub(crate) struct Timer {
 pub(crate) struct TimerQueue {
     next_id: u64,
     timers: Vec<Timer>,
+    /// These callbacks are due in this poll and can still be cancelled by an earlier callback.
+    #[cfg(feature = "ahcut")]
+    delivering: std::collections::HashSet<u64>,
 }
 
 impl TimerQueue {
@@ -44,6 +47,13 @@ impl TimerQueue {
 
     pub fn remove(&mut self, id: u64) {
         self.timers.retain(|timer| timer.id != id);
+        #[cfg(feature = "ahcut")]
+        self.delivering.remove(&id);
+    }
+
+    #[cfg(feature = "ahcut")]
+    pub fn begin_delivery(&mut self, id: u64) -> bool {
+        self.delivering.remove(&id)
     }
 
     pub fn add_animation_frame(&mut self, now: Instant, callback: JsObject) -> u64 {
@@ -85,6 +95,8 @@ impl TimerQueue {
         }
 
         due.sort_by_key(|timer| (timer.deadline, timer.id));
+        #[cfg(feature = "ahcut")]
+        self.delivering.extend(due.iter().map(|timer| timer.id));
         due
     }
 }

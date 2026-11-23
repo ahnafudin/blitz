@@ -31,13 +31,25 @@ fn observe(doc: &mut ScriptDocument, expression: &str) -> String {
 fn performance_and_seeded_random_are_ready_for_the_first_script() {
     let html = "<script>globalThis.start = [performance.timeOrigin, performance.now(), Date.now(), ...Array.from({length: 3}, () => Math.random() * 2 ** 53)];</script>";
     for _ in 0..2 {
-        let mut doc = ScriptDocument::from_html_with_virtual_epoch(html, DocumentConfig::default(), 1024).unwrap();
+        let mut doc =
+            ScriptDocument::from_html_with_virtual_epoch(html, DocumentConfig::default(), 1024)
+                .unwrap();
         let origin = doc.clock_now();
         doc.execute_scripts();
         assert!(doc.take_js_errors().is_empty());
-        assert_eq!(observe(&mut doc, "start"), "[1024,0,1024,7956156453446585,3886858653415212,238094247788840]");
-        doc.try_advance_clock_to(origin + Duration::from_nanos(33_333_333)).unwrap();
-        assert_eq!(observe(&mut doc, "[performance.timeOrigin, Math.round(performance.now() * 1e6), Date.now()]"), "[1024,33333333,1057]");
+        assert_eq!(
+            observe(&mut doc, "start"),
+            "[1024,0,1024,7956156453446585,3886858653415212,238094247788840]"
+        );
+        doc.try_advance_clock_to(origin + Duration::from_nanos(33_333_333))
+            .unwrap();
+        assert_eq!(
+            observe(
+                &mut doc,
+                "[performance.timeOrigin, Math.round(performance.now() * 1e6), Date.now()]"
+            ),
+            "[1024,33333333,1057]"
+        );
     }
 }
 
@@ -46,7 +58,8 @@ fn performance_and_seeded_random_are_ready_for_the_first_script() {
 fn a_timer_microtask_can_cancel_another_due_callback() {
     let mut doc = document(500);
     let origin = doc.clock_now();
-    doc.eval(r#"
+    doc.eval(
+        r#"
         globalThis.log = [];
         setTimeout(() => {
             log.push('first');
@@ -61,8 +74,10 @@ fn a_timer_microtask_can_cancel_another_due_callback() {
         const frame = requestAnimationFrame(() => log.push('cancelled frame'));
         const interval = setInterval(() => log.push('cancelled interval'), 16);
         setTimeout(() => log.push('last'), 16);
-    "#);
-    doc.try_advance_clock_to(origin + Duration::from_millis(16)).unwrap();
+    "#,
+    );
+    doc.try_advance_clock_to(origin + Duration::from_millis(16))
+        .unwrap();
     doc.poll(None);
     assert_eq!(observe(&mut doc, "log"), r#"["first","promise","last"]"#);
     assert!(doc.next_timer_deadline().is_none());

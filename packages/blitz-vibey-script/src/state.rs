@@ -82,6 +82,9 @@ pub(crate) struct RuntimeState {
     pub clock: ScriptClock,
     /// Origin of high-resolution animation timestamps, on the same driven clock.
     pub animation_time_origin: Option<web_time::Instant>,
+    /// SplitMix64 state, seeded to zero for each fresh document.
+    #[cfg(feature = "ahcut")]
+    pub random_state: u64,
     /// Messages sent from JavaScript to the embedder via the
     /// `__blitz_send_message` native function. Drained with
     /// [`ScriptDocument::take_messages`](crate::ScriptDocument::take_messages).
@@ -107,6 +110,17 @@ pub(crate) struct RuntimeState {
 const MAX_STORED_ERRORS: usize = 256;
 
 impl RuntimeState {
+    pub fn elapsed_millis(&self) -> f64 {
+        self.clock
+            .now()
+            .saturating_duration_since(
+                self.animation_time_origin
+                    .expect("runtime clock origin initialised"),
+            )
+            .as_secs_f64()
+            * 1000.0
+    }
+
     /// Record an error for the embedder to collect via
     /// [`ScriptDocument::take_js_errors`](crate::ScriptDocument::take_js_errors).
     /// Errors beyond [`MAX_STORED_ERRORS`] are dropped (with a marker) until the
