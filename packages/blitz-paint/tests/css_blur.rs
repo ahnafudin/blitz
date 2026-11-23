@@ -210,6 +210,25 @@ fn a_singular_blurred_box_has_no_output() {
 }
 
 #[test]
+fn a_box_beyond_the_source_clip_can_cast_a_shadow_into_it() {
+    let scene = paint_html(
+        "<!doctype html><style>body{margin:0}
+        #f{position:absolute;left:220px;top:20px;width:20px;height:20px;filter:blur(4px)}
+        #child{position:absolute;left:60px;width:6px;height:6px;box-shadow:-45px 0 2px red}
+        </style><div id=f><div id=child></div></div>",
+        1.0,
+    )
+    .unwrap();
+    assert!(
+        scene
+            .commands
+            .iter()
+            .any(|cmd| matches!(cmd, RenderCommand::BoxShadow(shadow)
+        if shadow.offset.x == -45.0))
+    );
+}
+
+#[test]
 fn unsupported_filter_members_keep_the_whole_list_refusal() {
     for value in [
         "contrast(2)",
