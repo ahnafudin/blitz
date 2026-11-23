@@ -1326,7 +1326,7 @@
     // `Element.getBoundingClientRect()` / `getClientRects()`: wrap the plain
     // rect objects produced by the natives in `DOMRect` / `DOMRectList`
     if (document.documentElement) {
-        const elementProto = Object.getPrototypeOf(document.documentElement);
+        const elementProto = Element.prototype;
         const nativeBoundingRect = elementProto.getBoundingClientRect;
         const nativeClientRects = elementProto.getClientRects;
         const toDomRect = (r) => makeRect(DOMRect, r.x, r.y, r.width, r.height);

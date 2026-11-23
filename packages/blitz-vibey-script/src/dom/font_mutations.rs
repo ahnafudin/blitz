@@ -8,7 +8,7 @@ const REBUILD: &str =
 fn refusal() -> boa_engine::JsError {
     JsNativeError::typ().with_message(REBUILD).into()
 }
-fn valid(context: &mut Context) -> JsResult<()> {
+pub(super) fn valid(context: &mut Context) -> JsResult<()> {
     if !dom_ctx(context)?.doc.borrow().font_stylesheets_valid() {
         return Err(refusal());
     }
@@ -182,4 +182,19 @@ fn preflight(
         return Err(refusal());
     }
     Ok(owned)
+}
+
+/// A detached element has no active style sheet. Check after Web IDL conversion, since the
+/// script supplying the value can itself mutate the tree during conversion.
+pub(super) fn reflected_write(doc: &BaseDocument, id: NodeId) -> JsResult<()> {
+    if !doc.font_stylesheets_valid()
+        || (doc.font_stylesheets_frozen()
+            && doc
+                .get_node(id)
+                .is_some_and(|node| node.flags.is_in_document())
+            && css_ancestor(doc, id))
+    {
+        return Err(refusal());
+    }
+    Ok(())
 }

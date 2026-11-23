@@ -203,6 +203,30 @@ fn href_assignment_on_an_unrelated_element_remains_an_ordinary_property() {
 }
 
 #[test]
+fn reflected_properties_preserve_element_interfaces_and_connected_stylesheet_freeze() {
+    let mut doc = ScriptDocument::from_html(
+        "<!doctype html><head><link rel='stylesheet'></head><body></body>",
+        DocumentConfig::default(),
+    );
+    doc.execute_scripts();
+    assert_eq!(
+        observe(
+            &mut doc,
+            r#"(()=>{
+        const div=document.createElement('div'),svg=document.createElementNS('http://www.w3.org/2000/svg','svg');
+        const link=document.querySelector('link'),detached=document.createElement('link');
+        detached.rel='icon'; let thrown;
+        try {link.rel='icon'} catch(e) {thrown=String(e).includes('STYLESHEET_REBUILD_REQUIRED')}
+        return [div instanceof HTMLElement,svg instanceof Element,svg instanceof HTMLElement,
+            'dir' in svg,'lang' in svg,typeof svg.getBBox,'classList' in svg,
+            detached.getAttribute('rel'),link.rel,thrown];
+    })()"#
+        ),
+        r#"[true,true,false,false,false,"function",true,"icon","stylesheet",true]"#
+    );
+}
+
+#[test]
 fn linked_and_imported_css_use_the_stylesheet_encoding_for_admission() {
     struct Sheets;
     impl NetProvider for Sheets {

@@ -22,9 +22,8 @@
 
     // Stub constructors for interfaces referenced by `instanceof` probes
     // (e.g. React probes `x instanceof HTMLInputElement`); without them such
-    // probes throw "right-hand side of 'instanceof' is not an object". All
-    // blitz-vibey-script elements share a single prototype, so tag-specific
-    // interfaces cannot be truthfully modelled: these always answer false.
+    // probes throw "right-hand side of 'instanceof' is not an object". These
+    // constructors are stubs and their instanceof probes always answer false.
     // `Window`: the global object's interface (`window instanceof Window`).
     // Feature-detection code (and WPT's idlharness) uses `'Window' in self`
     // to tell a window global from a worker or ShadowRealm global.
@@ -47,9 +46,14 @@
         }
     }
     if (document.documentElement) {
-        const elementProto = Object.getPrototypeOf(document.documentElement);
+        const root = document.documentElement;
+        const htmlRoot = root.localName === "html" && root.namespaceURI === "http://www.w3.org/1999/xhtml"
+            ? root : document.createElementNS("http://www.w3.org/1999/xhtml", "html");
+        const htmlProto = Object.getPrototypeOf(htmlRoot);
+        const parent = Object.getPrototypeOf(htmlProto);
+        const elementProto = parent === nodeProto ? htmlProto : parent;
         globalThis.Element = makeInterface("Element", elementProto);
-        globalThis.HTMLElement = globalThis.Element;
+        globalThis.HTMLElement = htmlProto === elementProto ? globalThis.Element : makeInterface("HTMLElement", htmlProto);
 
         // `classList` (DOMTokenList), backed by the `class` attribute
         Object.defineProperty(elementProto, "classList", {

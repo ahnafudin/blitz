@@ -83,7 +83,7 @@ pub(crate) fn node_wrapper(ctx: &DomCtx, node_id: NodeId, context: &mut Context)
             Some(NodeData::Element(element)) if element.name.ns == markup5ever::ns!(html) => protos
                 .html_elements
                 .get::<str>(element.name.local.as_ref())
-                .unwrap_or(&protos.element)
+                .unwrap_or(&protos.html_element)
                 .clone(),
             Some(NodeData::Element(_)) | Some(NodeData::AnonymousBlock(_)) => {
                 protos.element.clone()
@@ -265,14 +265,30 @@ pub(crate) fn define_accessor(
     setter: Option<NativeFnPtr>,
     context: &mut Context,
 ) {
+    define_native_accessor(
+        obj,
+        name,
+        getter.map(NativeFunction::from_fn_ptr),
+        setter.map(|s| native(name, true, s)),
+        context,
+    );
+}
+
+fn define_native_accessor(
+    obj: &JsObject,
+    name: &str,
+    getter: Option<NativeFunction>,
+    setter: Option<NativeFunction>,
+    context: &mut Context,
+) {
     let getter = getter.map(|g| {
-        FunctionObjectBuilder::new(context.realm(), NativeFunction::from_fn_ptr(g))
+        FunctionObjectBuilder::new(context.realm(), g)
             .name(JsString::from(format!("get {name}")))
             .length(0)
             .build()
     });
     let setter = setter.map(|s| {
-        FunctionObjectBuilder::new(context.realm(), native(name, true, s))
+        FunctionObjectBuilder::new(context.realm(), s)
             .name(JsString::from(format!("set {name}")))
             .length(1)
             .build()
@@ -392,8 +408,10 @@ pub(crate) fn init_protos(ctx: &DomCtx, context: &mut Context) {
     let _ = object_proto;
 
     #[cfg(feature = "ahcut")]
-    let html_elements = element::reflected_urls::prototypes(&element_proto, context);
+    let (html_element, html_elements) = element::reflection::prototypes(&element_proto, context);
     ctx.state.borrow_mut().protos = Some(DomProtos {
+        #[cfg(feature = "ahcut")]
+        html_element,
         #[cfg(feature = "ahcut")]
         html_elements,
         node: node_proto,

@@ -14,6 +14,7 @@ use super::{define_accessor, dom_ctx, js_str, this_node_id, to_rust_string};
 use crate::state::DomCtx;
 
 pub(crate) fn init_hyperlink_accessors(proto: &JsObject, context: &mut Context) {
+    #[cfg(not(feature = "ahcut"))]
     define_accessor(proto, "href", Some(get_href), Some(set_href), context);
     macro_rules! component {
         ($name:literal, $get:ident, $set:ident, $component:expr) => {
@@ -62,6 +63,7 @@ fn is_hyperlink(ctx: &DomCtx, node_id: NodeId) -> bool {
     matches!(local_name(ctx, node_id).as_deref(), Some("a" | "area"))
 }
 
+#[cfg(not(feature = "ahcut"))]
 fn reflects_href(ctx: &DomCtx, node_id: NodeId) -> bool {
     matches!(
         local_name(ctx, node_id).as_deref(),
@@ -80,6 +82,7 @@ fn resolved_url(ctx: &DomCtx, node_id: NodeId) -> Option<Url> {
     }
 }
 
+#[cfg(not(feature = "ahcut"))]
 fn get_href(this: &JsValue, _: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
     let ctx = dom_ctx(context)?;
     let node_id = this_node_id(this)?;
@@ -95,6 +98,7 @@ fn get_href(this: &JsValue, _: &[JsValue], context: &mut Context) -> JsResult<Js
     Ok(js_str(&href))
 }
 
+#[cfg(not(feature = "ahcut"))]
 fn set_href(this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
     let ctx = dom_ctx(context)?;
     let node_id = this_node_id(this)?;
