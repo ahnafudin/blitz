@@ -91,6 +91,9 @@ pub struct SvgImageData {
     /// `data:` URL. usvg would hand it to its path resolver; the `ahcut` resolver refuses it without reading.
     #[cfg(feature = "ahcut")]
     pub external_image: Option<SvgExternalImage>,
+    // Cloning an image shares its tree and its charge. The last clone returns the cache allowance.
+    #[cfg(feature = "ahcut")]
+    pub(crate) reservation: Option<Arc<crate::svg_budget::Reservation>>,
 }
 
 impl SvgImageData {
@@ -127,6 +130,8 @@ impl SvgImageData {
             text_element: refusals.text_element,
             #[cfg(feature = "ahcut")]
             external_image: refusals.external_image,
+            #[cfg(feature = "ahcut")]
+            reservation: None,
         })
     }
 

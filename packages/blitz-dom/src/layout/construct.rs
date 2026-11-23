@@ -460,8 +460,12 @@ fn collect_layout_children_with_wrap(
                 doc.nodes[id].remove_damage(CONSTRUCT_BOX | CONSTRUCT_DESCENDENT | CONSTRUCT_FC);
             });
 
-            match crate::util::parse_svg(outer_html.as_bytes(), Some((&doc.url, &doc.image_cache)))
-            {
+            match crate::util::parse_svg(
+                outer_html.as_bytes(),
+                Some((&doc.url, &doc.image_cache)),
+                #[cfg(feature = "ahcut")]
+                doc.svg_image_budget.as_ref(),
+            ) {
                 Ok(svg) => {
                     doc.get_node_mut(container_node_id)
                         .unwrap()

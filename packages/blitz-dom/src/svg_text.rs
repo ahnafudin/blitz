@@ -35,6 +35,11 @@ pub struct SvgImageUse {
 }
 
 impl BaseDocument {
+    /// A checked image failed its document's limits. This includes a failed parse with no drawable tree.
+    pub fn svg_limit_refusal(&self) -> Option<&'static str> {
+        self.svg_image_budget.as_ref()?.refusal()
+    }
+
     /// The first node that holds a parsed SVG for which `pick` finds something, with where it draws it. Every
     /// node is looked at, attached or not, so a frame that passes holds no such SVG at all.
     fn first_svg<T>(

@@ -707,10 +707,22 @@ impl NetHandler for ResourceHandler<DocumentSrcHandler> {
 
 pub struct ImageHandler {
     kind: ImageType,
+    #[cfg(feature = "ahcut")]
+    svg_image_budget: Option<crate::SvgImageBudget>,
 }
 impl ImageHandler {
     pub fn new(kind: ImageType) -> Self {
-        Self { kind }
+        Self {
+            kind,
+            #[cfg(feature = "ahcut")]
+            svg_image_budget: None,
+        }
+    }
+
+    #[cfg(feature = "ahcut")]
+    pub(crate) fn with_svg_budget(mut self, budget: Option<crate::SvgImageBudget>) -> Self {
+        self.svg_image_budget = budget;
+        self
     }
 }
 
@@ -750,7 +762,12 @@ impl ImageHandler {
         #[cfg(feature = "svg")]
         let svg_err = {
             use crate::util::parse_svg;
-            match parse_svg(&bytes, None) {
+            match parse_svg(
+                &bytes,
+                None,
+                #[cfg(feature = "ahcut")]
+                self.svg_image_budget.as_ref(),
+            ) {
                 Ok(svg) => return Ok(Resource::Svg(self.kind, svg)),
                 Err(e) => e.to_string(),
             }

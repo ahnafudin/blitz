@@ -99,6 +99,9 @@ pub fn try_paint_scene(
     y_offset: u32,
 ) -> Result<(), anyrender::filters::FilterError> {
     use anyrender::filters::FilterError;
+    if let Some(message) = doc.svg_limit_refusal() {
+        return Err(FilterError::Unsupported(message));
+    }
     if let Some(message) = doc.script_style_refusal() {
         return Err(FilterError::Unsupported(message));
     }

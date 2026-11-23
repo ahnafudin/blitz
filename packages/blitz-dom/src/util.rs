@@ -178,12 +178,13 @@ pub(crate) fn parse_svg(
         &crate::url::DocumentUrl,
         &std::collections::HashMap<String, crate::node::ImageData>,
     )>,
+    #[cfg(feature = "ahcut")] budget: Option<&crate::SvgImageBudget>,
 ) -> Result<crate::node::SvgImageData, usvg::Error> {
     // A checked render loads no external image: the mutator starts no such load and usvg is handed none.
     #[cfg(feature = "ahcut")]
     {
         let _ = images;
-        parse_svg_refusing_external(source)
+        parse_svg_refusing_external(source, budget)
     }
     #[cfg(not(feature = "ahcut"))]
     {
@@ -235,17 +236,58 @@ fn encode_png(image: &crate::node::RasterImageData) -> Option<Vec<u8>> {
 /// sources of its own before usvg parses it, and usvg forwards the `data:` URLs of a nested SVG here too. Any
 /// other source is a path or URL that usvg would read from disk: it is recorded and never opened.
 #[cfg(feature = "ahcut")]
-fn parse_svg_refusing_external(source: &[u8]) -> Result<crate::node::SvgImageData, usvg::Error> {
+pub(crate) fn parse_svg_refusing_external(
+    source: &[u8],
+    budget: Option<&crate::SvgImageBudget>,
+) -> Result<crate::node::SvgImageData, usvg::Error> {
+    let checked = budget.map(crate::svg_budget::CheckedParse::new);
+    let source = match checked.as_ref() {
+        Some(check) => check.xml(source)?,
+        None => Cow::Borrowed(source),
+    };
     let embedded = std::sync::Mutex::new(crate::node::SvgRefusals::default());
     let default_data = usvg::ImageHrefResolver::default_data_resolver();
     let options = usvg::Options {
         fontdb: Arc::clone(&*FONT_DB),
         image_href_resolver: usvg::ImageHrefResolver {
             resolve_data: Box::new(|mime: &str, data: Arc<Vec<u8>>, options: &usvg::Options| {
-                // The two types usvg tries as SVG.
-                if matches!(mime, "image/svg+xml" | "text/plain")
-                    && let Some(found) = crate::node::SvgRefusals::of_bytes(&data)
+                // usvg sniffs text/plain with imagesize and treats other bytes as a nested SVG.
+                let raster = match mime {
+                    "image/jpeg" | "image/jpg" | "image/png" | "image/gif" | "image/webp" => true,
+                    "image/svg+xml" => false,
+                    "text/plain" => matches!(
+                        imagesize::image_type(&data),
+                        Ok(imagesize::ImageType::Jpeg
+                            | imagesize::ImageType::Png
+                            | imagesize::ImageType::Gif
+                            | imagesize::ImageType::Webp)
+                    ),
+                    _ => return None,
+                };
+                if let Some(check) = checked.as_ref()
+                    && !check.charge_source(&data)
                 {
+                    return None;
+                }
+                if raster {
+                    if let Some(check) = checked.as_ref() {
+                        check.charge_raster(&data)?;
+                    }
+                    return default_data(mime, data, options);
+                }
+                let _level = match checked.as_ref() {
+                    Some(check) => Some(check.enter_svg()?),
+                    None => None,
+                };
+                let data = if let Some(check) = checked.as_ref() {
+                    match check.xml(&data).ok()? {
+                        Cow::Borrowed(_) => data,
+                        Cow::Owned(bytes) => Arc::new(bytes),
+                    }
+                } else {
+                    data
+                };
+                if let Some(found) = crate::node::SvgRefusals::of_bytes(&data) {
                     embedded.lock().unwrap().merge(found);
                 }
                 default_data(mime, data, options)
@@ -260,8 +302,9 @@ fn parse_svg_refusing_external(source: &[u8]) -> Result<crate::node::SvgImageDat
         },
         ..Default::default()
     };
-    let mut svg = crate::node::SvgImageData::from_data(source, &options)?;
+    let mut svg = crate::node::SvgImageData::from_data(&source, &options)?;
     drop(options);
+    svg.reservation = checked.map(crate::svg_budget::CheckedParse::into_reservation);
     let embedded = embedded.into_inner().unwrap();
     svg.text_element = svg.text_element.or(embedded.text_element);
     if svg.external_image.is_none() {
@@ -285,20 +328,30 @@ impl ToColorColor for AbsoluteColor {
 }
 
 #[cfg(all(test, feature = "svg"))]
+pub(crate) fn parse_svg_fixture(source: &[u8]) -> Result<crate::node::SvgImageData, usvg::Error> {
+    parse_svg(
+        source,
+        None,
+        #[cfg(feature = "ahcut")]
+        None,
+    )
+}
+
+#[cfg(all(test, feature = "svg"))]
 mod svg_tests {
-    use super::parse_svg;
+    use super::parse_svg_fixture;
 
     #[test]
     fn svg_without_xmlns_parses() {
         let src = br#"<svg viewBox="0 0 24 24"><path d="M0 0h24v24H0z"/></svg>"#;
-        let svg = parse_svg(src, None).unwrap();
+        let svg = parse_svg_fixture(src).unwrap();
         assert!(!svg.tree.root().children().is_empty());
     }
 
     #[test]
     fn missing_height_is_computed_from_width_and_viewbox_ratio() {
         let src = br#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="200"><rect width="100%" height="100%" fill="green"/></svg>"#;
-        let svg = parse_svg(src, None).unwrap();
+        let svg = parse_svg_fixture(src).unwrap();
         assert_eq!(svg.intrinsic_width(), Some(200.0));
         assert_eq!(svg.intrinsic_height(), None);
         assert_eq!(svg.viewbox_aspect_ratio(), Some(1.0));
@@ -309,7 +362,7 @@ mod svg_tests {
     #[test]
     fn viewbox_only_has_no_intrinsic_dimensions() {
         let src = br#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 485 58"></svg>"#;
-        let svg = parse_svg(src, None).unwrap();
+        let svg = parse_svg_fixture(src).unwrap();
         assert_eq!(svg.intrinsic_width(), None);
         assert_eq!(svg.intrinsic_height(), None);
         // The aspect ratio is still available from the viewBox.
@@ -319,7 +372,7 @@ mod svg_tests {
     #[test]
     fn absolute_dimensions_are_intrinsic() {
         let src = br#"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="16" viewBox="0 0 48 32"></svg>"#;
-        let svg = parse_svg(src, None).unwrap();
+        let svg = parse_svg_fixture(src).unwrap();
         assert_eq!(svg.intrinsic_width(), Some(24.0));
         assert_eq!(svg.intrinsic_height(), Some(16.0));
     }
@@ -327,7 +380,7 @@ mod svg_tests {
     #[test]
     fn percentage_dimensions_are_not_intrinsic() {
         let src = br#"<svg xmlns="http://www.w3.org/2000/svg" width="100%" height="50%" viewBox="0 0 200 100"></svg>"#;
-        let svg = parse_svg(src, None).unwrap();
+        let svg = parse_svg_fixture(src).unwrap();
         assert_eq!(svg.intrinsic_width(), None);
         assert_eq!(svg.intrinsic_height(), None);
     }
@@ -335,7 +388,7 @@ mod svg_tests {
     #[test]
     fn unit_lengths_are_intrinsic() {
         let src = br#"<svg xmlns="http://www.w3.org/2000/svg" width="24px" height="1.5em" viewBox="0 0 48 32"></svg>"#;
-        let svg = parse_svg(src, None).unwrap();
+        let svg = parse_svg_fixture(src).unwrap();
         assert!(svg.intrinsic_width().is_some());
         assert!(svg.intrinsic_height().is_some());
     }
@@ -343,7 +396,7 @@ mod svg_tests {
     #[test]
     fn non_numeric_dimensions_are_not_intrinsic() {
         let src = br#"<svg xmlns="http://www.w3.org/2000/svg" width="auto" height="foo" viewBox="0 0 200 100"></svg>"#;
-        let svg = parse_svg(src, None).unwrap();
+        let svg = parse_svg_fixture(src).unwrap();
         assert_eq!(svg.intrinsic_width(), None);
         assert_eq!(svg.intrinsic_height(), None);
     }

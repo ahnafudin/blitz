@@ -59,6 +59,8 @@ impl BaseDocument {
             base_url,
             ua_stylesheets: vec![UserAgentStylesheet::default_sheet()],
             net_provider: Some(self.net_provider.clone()),
+            #[cfg(feature = "ahcut")]
+            svg_image_budget: self.svg_image_budget.clone(),
             navigation_provider: Some(Arc::new(IframeNavigationProvider {
                 node_id,
                 tx: self.tx.clone(),

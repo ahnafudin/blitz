@@ -41,6 +41,9 @@ pub struct DocumentConfig {
     pub ua_stylesheets: Vec<UserAgentStylesheet>,
     /// Net provider to handle network requests for resources
     pub net_provider: Option<Arc<dyn NetProvider>>,
+    /// The allowance shared by embedded SVG images in this document and its resource handlers.
+    #[cfg(feature = "ahcut")]
+    pub svg_image_budget: Option<crate::SvgImageBudget>,
     /// Navigation provider to handle link clicks and form submissions
     pub navigation_provider: Option<Arc<dyn NavigationProvider>>,
     /// Shell provider to redraw requests, clipboard, etc
@@ -80,6 +83,8 @@ impl Default for DocumentConfig {
             base_url: None,
             ua_stylesheets: vec![UserAgentStylesheet::default_sheet()],
             net_provider: None,
+            #[cfg(feature = "ahcut")]
+            svg_image_budget: None,
             navigation_provider: None,
             shell_provider: None,
             html_parser_provider: None,

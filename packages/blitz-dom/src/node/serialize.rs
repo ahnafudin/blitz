@@ -391,7 +391,7 @@ mod tests {
                 "</svg>",
             )
         );
-        assert!(crate::util::parse_svg(source.as_bytes(), None).is_ok());
+        assert!(crate::util::parse_svg_fixture(source.as_bytes()).is_ok());
     }
 
     #[test]
@@ -421,7 +421,7 @@ mod tests {
             doc.mutate().append_children(svg, &[style]);
 
             let source = doc.get_node(svg).unwrap().svg_source();
-            let image = crate::util::parse_svg(source.as_bytes(), None).unwrap();
+            let image = crate::util::parse_svg_fixture(source.as_bytes()).unwrap();
             assert!(image.tree.root().children().is_empty(), "{source}");
         }
     }

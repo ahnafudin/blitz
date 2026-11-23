@@ -92,8 +92,17 @@ impl BaseDocument {
         } else {
             viewport.svg_source_with_target(Some((node_id, &marker)))
         };
-        let svg = crate::util::parse_svg(source.as_bytes(), None)
-            .map_err(|error| format!("SVG geometry parse failed: {error}"))?;
+        let parsed = crate::util::parse_svg(
+            source.as_bytes(),
+            None,
+            #[cfg(feature = "ahcut")]
+            self.svg_image_budget.as_ref(),
+        );
+        #[cfg(feature = "ahcut")]
+        if let Some(message) = self.svg_limit_refusal() {
+            return Err(message.into());
+        }
+        let svg = parsed.map_err(|error| format!("SVG geometry parse failed: {error}"))?;
         let layout = viewport.final_layout();
         let width = layout.size.width
             - layout.border.left

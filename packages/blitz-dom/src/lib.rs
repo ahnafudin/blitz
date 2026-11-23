@@ -80,9 +80,13 @@ mod stylo_to_cursor_icon;
 mod stylo_to_kurbo;
 mod stylo_to_parley;
 #[cfg(feature = "ahcut")]
+mod svg_budget;
+#[cfg(feature = "ahcut")]
 pub mod svg_filters;
 #[cfg(feature = "ahcut")]
 mod svg_text;
+#[cfg(feature = "ahcut")]
+pub use svg_budget::{SvgImageBudget, SvgImageLimits};
 #[cfg(feature = "ahcut")]
 pub use svg_text::{SvgImageUse, SvgTextPlace, SvgTextUse};
 mod svg_geometry;

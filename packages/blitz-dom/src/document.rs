@@ -364,6 +364,8 @@ pub struct BaseDocument {
     // Service providers
     /// Network provider. Can be used to fetch assets.
     pub net_provider: Arc<dyn NetProvider>,
+    #[cfg(feature = "ahcut")]
+    pub(crate) svg_image_budget: Option<crate::SvgImageBudget>,
     /// Navigation provider. Can be used to navigate to a new page (bubbles up the event
     /// on e.g. clicking a Link)
     pub navigation_provider: Arc<dyn NavigationProvider>,
@@ -541,6 +543,8 @@ impl BaseDocument {
             pending_critical_resources: HashSet::new(),
             controls_to_form: HashMap::new(),
             net_provider,
+            #[cfg(feature = "ahcut")]
+            svg_image_budget: config.svg_image_budget,
             navigation_provider,
             shell_provider,
             html_parser_provider,
@@ -674,12 +678,15 @@ impl BaseDocument {
         tracing::info!("Fetching image {url}");
         self.pending_images
             .insert(url.as_str().to_string(), vec![waiting]);
+        let image = ImageHandler::new(image_type);
+        #[cfg(feature = "ahcut")]
+        let image = image.with_svg_budget(self.svg_image_budget.clone());
         let handler = Box::new(ResourceHandler::new(
             self.tx.clone(),
             self.id(),
             None,
             self.shell_provider.clone(),
-            ImageHandler::new(image_type),
+            image,
         ));
         #[cfg(feature = "ahcut")]
         {
