@@ -92,11 +92,22 @@ impl BaseDocument {
         } else {
             viewport.svg_source_with_target(Some((node_id, &marker)))
         };
+        #[cfg(feature = "ahcut")]
+        let geometry_budget = self.svg_image_budget.as_ref().map(|budget| {
+            let drawn = viewport
+                .element_data()
+                .and_then(|element| element.image_data());
+            let lease = match drawn {
+                Some(crate::node::ImageData::Svg(svg)) => svg.reservation.as_deref(),
+                _ => None,
+            };
+            budget.for_geometry(lease)
+        });
         let parsed = crate::util::parse_svg(
             source.as_bytes(),
             None,
             #[cfg(feature = "ahcut")]
-            self.svg_image_budget.as_ref(),
+            geometry_budget.as_ref(),
         );
         #[cfg(feature = "ahcut")]
         if let Some(message) = self.svg_limit_refusal() {

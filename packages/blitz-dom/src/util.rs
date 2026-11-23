@@ -265,7 +265,7 @@ pub(crate) fn parse_svg_refusing_external(
                     _ => return None,
                 };
                 if let Some(check) = checked.as_ref()
-                    && !check.charge_source(&data)
+                    && !check.source_fits(&data)
                 {
                     return None;
                 }

@@ -7,6 +7,8 @@ use std::sync::{Arc, Mutex};
 pub struct SvgImageLimits {
     pub source_bytes: u64,
     pub raster_pixels: u64,
+    pub raster_edge: u64,
+    /// Maximum SVG documents in a chain, including the outermost document.
     pub nesting: u32,
 }
 
@@ -15,6 +17,8 @@ pub struct SvgImageLimits {
 pub struct SvgImageBudget {
     pub(crate) limits: SvgImageLimits,
     state: Arc<Mutex<State>>,
+    // Only a temporary geometry parse can borrow the allowance of its already-rendered tree.
+    geometry_credit: u64,
 }
 
 #[derive(Debug)]
@@ -25,6 +29,8 @@ struct State {
 
 pub(crate) const SOURCE: &str = "LIMIT_EXCEEDED:limit.file.bytes: reduce the embedded image source";
 pub(crate) const PIXELS: &str = "LIMIT_EXCEEDED:limit.image.pixels: resize the embedded raster";
+pub(crate) const EDGE: &str =
+    "LIMIT_EXCEEDED:limit.image.edge: resize the image to at most 32768 pixels on each edge";
 pub(crate) const NESTING: &str =
     "LIMIT_EXCEEDED:limit.svg.image.nesting: flatten the nested SVG images";
 pub(crate) const CACHE: &str = "LIMIT_EXCEEDED:limit.worker.asset-cache.bytes: reduce the embedded images or the other project assets";
@@ -33,6 +39,7 @@ impl SvgImageBudget {
     pub fn new(limits: SvgImageLimits, remaining_cache_bytes: u64) -> Self {
         Self {
             limits,
+            geometry_credit: 0,
             state: Arc::new(Mutex::new(State {
                 available: remaining_cache_bytes,
                 refusal: None,
@@ -58,7 +65,16 @@ impl SvgImageBudget {
         Reservation {
             budget: self.clone(),
             bytes: 0,
+            credit: self.geometry_credit,
         }
+    }
+
+    pub(crate) fn for_geometry(&self, rendered: Option<&Reservation>) -> Self {
+        let mut temporary = self.clone();
+        temporary.geometry_credit = rendered
+            .filter(|lease| Arc::ptr_eq(&self.state, &lease.budget.state))
+            .map_or(0, |lease| lease.bytes);
+        temporary
     }
 }
 
@@ -66,6 +82,7 @@ impl SvgImageBudget {
 pub(crate) struct Reservation {
     budget: SvgImageBudget,
     bytes: u64,
+    credit: u64,
 }
 
 impl Reservation {
@@ -74,12 +91,15 @@ impl Reservation {
         if state.refusal.is_some() {
             return false;
         }
-        let Some(left) = state.available.checked_sub(bytes) else {
+        let covered = self.credit.min(bytes);
+        let charge = bytes - covered;
+        let Some(left) = state.available.checked_sub(charge) else {
             state.refusal = Some(CACHE);
             return false;
         };
         state.available = left;
-        self.bytes += bytes;
+        self.credit -= covered;
+        self.bytes += charge;
         true
     }
 }
@@ -100,10 +120,13 @@ pub(crate) struct CheckedParse<'a> {
 
 impl<'a> CheckedParse<'a> {
     pub(crate) fn new(budget: &'a SvgImageBudget) -> Self {
+        if budget.limits.nesting == 0 {
+            budget.refuse(NESTING);
+        }
         Self {
             budget,
             held: Mutex::new(budget.reservation()),
-            depth: 0.into(),
+            depth: 1.into(),
         }
     }
 
@@ -119,13 +142,15 @@ impl<'a> CheckedParse<'a> {
         self.budget.refusal().is_none()
     }
 
-    pub(crate) fn charge_source(&self, data: &[u8]) -> bool {
-        self.source_fits(data) && self.held.lock().unwrap().add(data.len() as u64)
-    }
-
     pub(crate) fn charge_raster(&self, data: &[u8]) -> Option<()> {
         // The same header reader as usvg's ImageKind::actual_size, before any pixel decode.
         let size = imagesize::blob_size(data).ok()?;
+        if size.width as u64 > self.budget.limits.raster_edge
+            || size.height as u64 > self.budget.limits.raster_edge
+        {
+            self.budget.refuse(EDGE);
+            return None;
+        }
         let pixels = (size.width as u64).checked_mul(size.height as u64);
         let Some(pixels) = pixels.filter(|pixels| *pixels <= self.budget.limits.raster_pixels)
         else {
@@ -177,10 +202,6 @@ impl<'a> CheckedParse<'a> {
                 .map_err(|_| usvg::Error::MalformedGZip)?;
             if n == 0 {
                 break;
-            }
-            if (output.len() as u64).saturating_add(n as u64) > self.budget.limits.source_bytes {
-                self.budget.refuse(SOURCE);
-                return Err(usvg::Error::ElementsLimitReached);
             }
             if !self.held.lock().unwrap().add(n as u64) {
                 return Err(usvg::Error::ElementsLimitReached);

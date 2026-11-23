@@ -11,6 +11,40 @@ const HEAD_SHEET: &str =
     "#free,#held{position:absolute}#wrap{position:relative}#hidden{display:none}";
 
 #[test]
+fn geometry_reads_and_a_tween_rebuild_can_reuse_the_rendered_svg_allowance() {
+    let budget = blitz_dom::SvgImageBudget::new(
+        blitz_dom::SvgImageLimits {
+            source_bytes: 4096,
+            raster_pixels: 16,
+            raster_edge: 4,
+            nesting: 2,
+        },
+        5,
+    );
+    // A 1x1 PNG uses four RGBA bytes, more than half the remaining allowance.
+    let html = r#"<svg width="32" height="16" xmlns="http://www.w3.org/2000/svg"><image width="4" height="4" href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+j6B8AAAAASUVORK5CYII="/><rect id="box" width="4" height="4"/></svg>"#;
+    let mut doc = ScriptDocument::from_html(
+        html,
+        DocumentConfig {
+            svg_image_budget: Some(budget.clone()),
+            ..DocumentConfig::default()
+        },
+    );
+    doc.execute_scripts();
+    let bounds = observe(
+        &mut doc,
+        r#"(() => {
+        const box = document.getElementById("box");
+        const before = box.getBBox().width;
+        box.setAttribute("width", "6");
+        return [before, box.getBBox().width, box.getCTM().a];
+    })()"#,
+    );
+    assert_eq!(bounds, "[4,6,1]");
+    assert_eq!(budget.refusal(), None);
+}
+
+#[test]
 fn checked_style_ingress_preserves_the_first_refusal_even_after_script_catches_it() {
     const MOTION: &str = "CSS_KEYFRAMES_REFUSED:write the animation on the timeline in __seek";
     const STROKE: &str = "STYLE_PROPERTY_REFUSED:use filled text or an outlined SVG path";
