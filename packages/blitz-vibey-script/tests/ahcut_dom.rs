@@ -452,6 +452,60 @@ fn a_move_is_refused_only_when_it_touches_a_style_sheet() {
 /// Remembers every URL it is asked for and serves none.
 struct Asked(Mutex<Vec<String>>);
 
+#[test]
+fn a_detached_image_can_decode_validated_facts_and_reselect_in_its_load_handler() {
+    use blitz_traits::net::{ImageFacts, Url};
+    struct FactsOnly;
+    impl NetProvider for FactsOnly {
+        fn fetch(&self, _: usize, request: Request, _: Box<dyn NetHandler>) {
+            panic!("unexpected byte request for {}", request.url);
+        }
+
+        fn image_facts(&self, _: usize, url: &Url) -> Result<Option<ImageFacts>, String> {
+            let width = match url.path() {
+                "/first.png" => 8,
+                "/last.png" => 3,
+                path => return Err(format!("unexpected image {path}")),
+            };
+            Ok(Some(ImageFacts {
+                asset: width,
+                width,
+                height: 6,
+                has_alpha: false,
+            }))
+        }
+    }
+    let config = DocumentConfig {
+        base_url: Some("https://ahcut.invalid/".into()),
+        net_provider: Some(Arc::new(FactsOnly)),
+        ..DocumentConfig::default()
+    };
+    let mut doc = ScriptDocument::from_html_with_virtual_epoch(
+        r#"<!doctype html><script>
+        const img = new Image(40, 50), log = [];
+        img.onload = event => {
+            log.push([event.target === img, img.complete, img.naturalWidth, img.naturalHeight]);
+            if (img.naturalWidth === 8) {
+                const old = img.decode();
+                img.src = 'last.png';
+                old.catch(e => log.push(e.name));
+            }
+        };
+        img.src = 'first.png';
+        </script>"#,
+        config,
+        0,
+    )
+    .unwrap();
+    doc.execute_scripts();
+    doc.poll(None);
+    doc.poll(None);
+    assert_eq!(
+        observe(&mut doc, "log"),
+        r#"[[true,true,8,6],"EncodingError",[true,true,3,6]]"#
+    );
+}
+
 impl NetProvider for Asked {
     fn fetch(&self, _doc_id: usize, request: Request, handler: Box<dyn NetHandler>) {
         let url = request.url.to_string();
