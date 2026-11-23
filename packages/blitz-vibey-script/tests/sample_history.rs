@@ -50,6 +50,8 @@ fn setup_is_outside_the_observation_and_a_caught_exception_cannot_clear_the_firs
     .unwrap();
     doc.execute_scripts();
     assert_eq!(doc.finish_sample_hook(), None);
+    doc.eval("if (typeof globalThis.__blitz_note_dom_toggle !== 'undefined' || Object.hasOwn(globalThis, '__blitz_note_dom_toggle')) throw Error('the DOM toggle observer survived bootstrap')");
+    assert!(doc.take_js_errors().is_empty());
     for (script, expected) in [
         ("void draw;", None),
         (
