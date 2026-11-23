@@ -69,7 +69,7 @@ fn ignore_measurement(_: &JsValue, _: &[JsValue], _: &mut Context) -> JsResult<J
 }
 
 fn empty_entries(_: &JsValue, _: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
-    Ok(boa_engine::object::builtins::JsArray::new(context).into())
+    Ok(boa_engine::object::builtins::JsArray::new(context)?.into())
 }
 
 fn random(_: &JsValue, _: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
