@@ -69,6 +69,8 @@ pub(crate) struct ScriptRuntime {
     pub(crate) sample_promise: Option<boa_engine::object::builtins::JsPromise>,
     #[cfg(feature = "ahcut")]
     font_poll: Option<boa_engine::object::JsObject>,
+    #[cfg(feature = "ahcut")]
+    host_sdk: Option<boa_engine::object::JsObject>,
 }
 
 impl ScriptRuntime {
@@ -142,6 +144,8 @@ impl ScriptRuntime {
             sample_promise: None,
             #[cfg(feature = "ahcut")]
             font_poll: None,
+            #[cfg(feature = "ahcut")]
+            host_sdk: None,
         };
 
         // Install JavaScript APIs after the native bindings.
@@ -179,10 +183,21 @@ impl ScriptRuntime {
     #[cfg(feature = "ahcut")]
     pub(crate) fn install_host_sdk(&mut self, source: &str) {
         const DESCRIPTION: &str = "<host SDK>";
-        if let Err(error) = crate::refusal::install_sdk(source, &mut self.context) {
-            report_js_error(&self.ctx, &mut self.context, DESCRIPTION, &error);
+        self.host_sdk = None;
+        match crate::refusal::install_sdk(source, &mut self.context) {
+            Ok(host) => self.host_sdk = host,
+            Err(error) => report_js_error(&self.ctx, &mut self.context, DESCRIPTION, &error),
         }
         self.run_jobs(DESCRIPTION);
+    }
+
+    #[cfg(feature = "ahcut")]
+    pub(crate) fn call_host_sdk(&mut self, method: &str) {
+        if let Err(error) =
+            crate::refusal::call_sdk(self.host_sdk.as_ref(), method, &mut self.context)
+        {
+            report_js_error(&self.ctx, &mut self.context, "<host SDK check>", &error);
+        }
     }
 
     /// Run pending promise jobs (microtasks)

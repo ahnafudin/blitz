@@ -68,6 +68,24 @@ fn the_host_sdk_issues_refusals_by_identity_before_the_first_page_script() {
 }
 
 #[test]
+fn the_embedder_calls_the_private_object_returned_by_its_installer() {
+    let mut doc = document();
+    doc.install_host_sdk("(makeRefusal) => Object.freeze({check() { throw makeRefusal('INPUT_REFUSED:use a number') }})");
+    doc.call_host_sdk("check");
+    let errors = doc.take_uncaught_errors();
+    assert_eq!(errors.len(), 1);
+    assert_eq!(
+        errors[0].refusal.as_deref(),
+        Some("INPUT_REFUSED:use a number")
+    );
+    doc.install_host_sdk("() => {}");
+    doc.call_host_sdk("check");
+    let errors = doc.take_uncaught_errors();
+    assert_eq!(errors.len(), 1);
+    assert!(errors[0].refusal.is_none());
+}
+
+#[test]
 fn a_broken_trusted_installer_reports_an_ordinary_exception() {
     for source in ["(", "null", "() => { throw Error('setup failed') }"] {
         let mut doc = ScriptDocument::from_html("<body>", DocumentConfig::default());

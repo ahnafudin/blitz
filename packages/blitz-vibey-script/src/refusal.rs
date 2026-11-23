@@ -40,7 +40,7 @@ fn make_refusal(_: &JsValue, args: &[JsValue], context: &mut Context) -> JsResul
     tag(error, message, context)
 }
 
-pub(crate) fn install_sdk(source: &str, context: &mut Context) -> JsResult<()> {
+pub(crate) fn install_sdk(source: &str, context: &mut Context) -> JsResult<Option<JsObject>> {
     let installer = context
         .eval(Source::from_bytes(source))?
         .as_callable()
@@ -51,7 +51,22 @@ pub(crate) fn install_sdk(source: &str, context: &mut Context) -> JsResult<()> {
         FunctionObjectBuilder::new(context.realm(), NativeFunction::from_fn_ptr(make_refusal))
             .length(1)
             .build();
-    installer.call(&JsValue::undefined(), &[factory.into()], context)?;
+    let result = installer.call(&JsValue::undefined(), &[factory.into()], context)?;
+    Ok(result.as_object())
+}
+
+pub(crate) fn call_sdk(
+    host: Option<&JsObject>,
+    method: &str,
+    context: &mut Context,
+) -> JsResult<()> {
+    let host =
+        host.ok_or_else(|| JsNativeError::typ().with_message("the host SDK is unavailable"))?;
+    let callback = host
+        .get(JsString::from(method), context)?
+        .as_callable()
+        .ok_or_else(|| JsNativeError::typ().with_message("the host SDK method must be callable"))?;
+    callback.call(&host.clone().into(), &[], context)?;
     Ok(())
 }
 

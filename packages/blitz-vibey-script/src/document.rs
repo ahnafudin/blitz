@@ -341,6 +341,13 @@ impl ScriptDocument {
         self.runtime.install_host_sdk(source);
     }
 
+    /// Call a zero-argument method on the private object returned by the installer.
+    /// The embedder chooses the method. Any exception enters the document's ordinary error queue.
+    #[cfg(feature = "ahcut")]
+    pub fn call_host_sdk(&mut self, method: &str) {
+        self.runtime.call_host_sdk(method);
+    }
+
     /// Evaluate arbitrary JavaScript code in the document's script context
     pub fn eval(&mut self, code: &str) {
         self.runtime.sync_named_element_globals();
