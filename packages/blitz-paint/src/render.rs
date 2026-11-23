@@ -359,7 +359,10 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
         };
         let element = node.element_data();
         self.root_element_id != Some(node.id)
-            && (element.and_then(|e| e.raster_image_data()).is_some()
+            && (element
+                .and_then(|e| e.image_data())
+                .and_then(|image| image.intrinsic_raster_size())
+                .is_some()
                 || element.and_then(|e| e.sub_doc_data()).is_some()
                 || element.and_then(|e| e.text_input_data()).is_some()
                 || contain_paint
@@ -1437,7 +1440,27 @@ impl ElementCx<'_, '_> {
         );
     }
 
+    #[cfg(feature = "ahcut")]
+    fn refuse_image_facts(&self) {
+        if self.context.checked_filters {
+            self.context.filter_error.borrow_mut().get_or_insert(
+                anyrender::filters::FilterError::Unsupported(crate::IMAGE_REFUSED),
+            );
+        }
+    }
+
     fn draw_image(&self, scene: &mut impl PaintScene) {
+        #[cfg(feature = "ahcut")]
+        if matches!(
+            self.element.image_data(),
+            Some(blitz_dom::node::ImageData::Facts(_))
+        ) {
+            let size = self.frame.content_box();
+            if size.width() > 0.0 && size.height() > 0.0 {
+                self.refuse_image_facts();
+            }
+            return;
+        }
         if let Some(image) = self.element.raster_image_data() {
             let content_box = self.frame.content_box();
             let width = content_box.width() as u32;

@@ -4,7 +4,9 @@
 //! However, in Blitz, we do a style pass then a layout pass.
 //! This is slower, yes, but happens fast enough that it's not a huge issue.
 
-use crate::node::{ComputedStyleRef, ImageData, NodeData, SpecialElementData};
+#[cfg(feature = "svg")]
+use crate::node::ImageData;
+use crate::node::{ComputedStyleRef, NodeData, SpecialElementData};
 use crate::{document::BaseDocument, dom_node_id, node::Node, taffy_node_id};
 use markup5ever::{LocalName, local_name};
 use std::cell::Ref;
@@ -393,44 +395,46 @@ impl LayoutPassState<'_> {
 
                     // Get the element's intrinsic dimensions and default object size
                     let (intrinsic_sizes, default_object_size) = match &element_data.special_data {
-                        SpecialElementData::Image(image_data) => match &**image_data {
-                            ImageData::Raster(image) => {
-                                let (width, height) = (image.width as f32, image.height as f32);
-                                (
-                                    IntrinsicSizes {
-                                        width: Some(width),
-                                        height: Some(height),
-                                        ratio: Some(width / height),
-                                    },
-                                    DEFAULT_OBJECT_SIZE,
-                                )
-                            }
-                            #[cfg(feature = "svg")]
-                            ImageData::Svg(svg) => {
-                                let mut width = svg.intrinsic_width();
-                                let mut height = svg.intrinsic_height();
-                                // An SVG with no declared dimensions and no viewBox has no
-                                // intrinsic dimensions per CSS, but usvg still resolves a
-                                // concrete size; use it in place of the default object size.
-                                if width.is_none()
-                                    && height.is_none()
-                                    && svg.viewbox_aspect_ratio().is_none()
-                                {
-                                    let size = svg.tree.size();
-                                    width = Some(size.width());
-                                    height = Some(size.height());
+                        SpecialElementData::Image(image_data) => {
+                            match (image_data.intrinsic_raster_size(), &**image_data) {
+                                (Some((width, height)), _) => {
+                                    let (width, height) = (width as f32, height as f32);
+                                    (
+                                        IntrinsicSizes {
+                                            width: Some(width),
+                                            height: Some(height),
+                                            ratio: Some(width / height),
+                                        },
+                                        DEFAULT_OBJECT_SIZE,
+                                    )
                                 }
-                                (
-                                    IntrinsicSizes {
-                                        width,
-                                        height,
-                                        ratio: Some(svg.aspect_ratio()),
-                                    },
-                                    DEFAULT_OBJECT_SIZE,
-                                )
+                                #[cfg(feature = "svg")]
+                                (None, ImageData::Svg(svg)) => {
+                                    let mut width = svg.intrinsic_width();
+                                    let mut height = svg.intrinsic_height();
+                                    // An SVG with no declared dimensions and no viewBox has no
+                                    // intrinsic dimensions per CSS, but usvg still resolves a
+                                    // concrete size; use it in place of the default object size.
+                                    if width.is_none()
+                                        && height.is_none()
+                                        && svg.viewbox_aspect_ratio().is_none()
+                                    {
+                                        let size = svg.tree.size();
+                                        width = Some(size.width());
+                                        height = Some(size.height());
+                                    }
+                                    (
+                                        IntrinsicSizes {
+                                            width,
+                                            height,
+                                            ratio: Some(svg.aspect_ratio()),
+                                        },
+                                        DEFAULT_OBJECT_SIZE,
+                                    )
+                                }
+                                (None, _) => (IntrinsicSizes::default(), taffy::Size::ZERO),
                             }
-                            ImageData::None => (IntrinsicSizes::default(), taffy::Size::ZERO),
-                        },
+                        }
                         SpecialElementData::Canvas(_)
                         | SpecialElementData::SubDocument(_)
                         | SpecialElementData::None => {

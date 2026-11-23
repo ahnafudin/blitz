@@ -3,13 +3,10 @@ use blitz_traits::node_id::NodeId;
 use markup5ever::local_name;
 use stylo_taffy::CopyStyleGetters;
 
-use crate::net::ResourceHandler;
 use crate::node::NodeFlags;
 use crate::stylo::BlitzNode;
 use crate::tree::NodeTree;
-use crate::{
-    BaseDocument, net::ImageHandler, node::ImageResourceData, node::Status, util::ImageLayerKind,
-};
+use crate::{BaseDocument, node::ImageResourceData, node::Status, util::ImageLayerKind};
 use style::matching::StyleChange;
 use style::properties::ComputedValues;
 use style::properties::generated::longhands::position::computed_value::T as Position;
@@ -550,7 +547,7 @@ impl BaseDocument {
     /// Flush a CSS image layer list (`background-image` or `mask-image`) from style
     /// to dedicated storage on the node, fetching any images which are not yet loaded.
     fn flush_image_layers_from_style(&mut self, node_id: NodeId, kind: ImageLayerKind) {
-        let doc_id = self.id();
+        let mut requests = Vec::new();
         let node = self.nodes.get_mut(node_id).unwrap();
         // Clone the primary style `Arc` into an owned value so the immutable
         // borrow of `node` (held by the stylo element data guard) is released
@@ -600,34 +597,8 @@ impl BaseDocument {
                             status: Status::Ok,
                             image: cached_image.clone(),
                         })
-                    } else if let Some(waiting_list) = self.pending_images.get_mut(url_str) {
-                        // Image is already being fetched, queue this node
-                        #[cfg(feature = "tracing")]
-                        tracing::info!("Image {url_str} already pending, queueing node {node_id}");
-                        waiting_list.push((node_id, kind.image_type(idx)));
-                        Some(ImageResourceData::new(new_url.clone()))
                     } else {
-                        // Start fetch and track as pending
-                        #[cfg(feature = "tracing")]
-                        tracing::info!("Fetching image {url_str}");
-                        self.pending_images
-                            .insert(url_str.to_string(), vec![(node_id, kind.image_type(idx))]);
-
-                        self.net_provider.fetch(
-                            doc_id,
-                            crate::net::stamped_request(
-                                (**new_url).clone(),
-                                self.abort_signal.as_ref(),
-                            ),
-                            ResourceHandler::boxed(
-                                self.tx.clone(),
-                                doc_id,
-                                None, // Don't pass node_id, we'll handle via pending_images
-                                self.shell_provider.clone(),
-                                ImageHandler::new(kind.image_type(idx)),
-                            ),
-                        );
-
+                        requests.push(((**new_url).clone(), kind.image_type(idx)));
                         Some(ImageResourceData::new(new_url.clone()))
                     }
                 }
@@ -636,6 +607,9 @@ impl BaseDocument {
 
             // Element will always exist due to resize_with above
             elem_images[idx] = new_image;
+        }
+        for (url, image_type) in requests {
+            self.fetch_image(url, node_id, image_type);
         }
     }
 }

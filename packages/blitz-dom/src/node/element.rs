@@ -81,6 +81,10 @@ pub struct ElementData {
     ///   - The text editor for input/textarea elements
     pub special_data: SpecialElementData,
 
+    /// Current request of an HTML image, including a detached image created by script.
+    #[cfg(feature = "ahcut")]
+    pub image_selection: Option<Box<crate::ImageSelection>>,
+
     pub background_images: ThinVec<Option<ImageResourceData>>,
 
     pub mask_images: ThinVec<Option<ImageResourceData>>,
@@ -325,6 +329,8 @@ impl Clone for ElementData {
             is_focussable: self.is_focussable,
             style_attribute: self.style_attribute.clone(),
             special_data: self.special_data.clone(),
+            #[cfg(feature = "ahcut")]
+            image_selection: None,
             background_images: self.background_images.clone(),
             mask_images: self.mask_images.clone(),
             inline_layout_data: self.inline_layout_data.clone(),
@@ -444,6 +450,8 @@ impl ElementData {
             inline_layout_data: None,
             list_item_data: None,
             special_data: SpecialElementData::None,
+            #[cfg(feature = "ahcut")]
+            image_selection: None,
             template_contents: None,
             background_images: ThinVec::new(),
             mask_images: ThinVec::new(),
@@ -909,9 +917,23 @@ impl RasterImageData {
 #[derive(Debug, Clone)]
 pub enum ImageData {
     Raster(RasterImageData),
+    #[cfg(feature = "ahcut")]
+    Facts(blitz_traits::net::ImageFacts),
     #[cfg(feature = "svg")]
     Svg(SvgImageData),
     None,
+}
+
+impl ImageData {
+    /// Oriented intrinsic dimensions of a raster, whether its pixels or just its facts are loaded.
+    pub fn intrinsic_raster_size(&self) -> Option<(u32, u32)> {
+        match self {
+            Self::Raster(raster) => Some((raster.width, raster.height)),
+            #[cfg(feature = "ahcut")]
+            Self::Facts(facts) => Some((facts.width, facts.height)),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -955,6 +977,8 @@ impl std::fmt::Debug for SpecialElementData {
             SpecialElementData::Stylesheet(_) => f.write_str("NodeSpecificData::Stylesheet"),
             SpecialElementData::Image(data) => match **data {
                 ImageData::Raster(_) => f.write_str("NodeSpecificData::Image(Raster)"),
+                #[cfg(feature = "ahcut")]
+                ImageData::Facts(_) => f.write_str("NodeSpecificData::Image(Facts)"),
                 #[cfg(feature = "svg")]
                 ImageData::Svg(_) => f.write_str("NodeSpecificData::Image(Svg)"),
                 ImageData::None => f.write_str("NodeSpecificData::Image(None)"),

@@ -421,6 +421,15 @@ impl DocumentMutator<'_> {
             return;
         }
 
+        #[cfg(feature = "ahcut")]
+        if element.name.ns == ns!(html)
+            && name.ns == ns!()
+            && (tag, attr) == tag_and_attr!("img", "src")
+        {
+            self.doc.select_html_image(node_id);
+            return;
+        }
+
         // If node if not in the document, then don't apply any special behaviours
         // and simply set the attribute value
         if !node.flags.is_in_document() {
@@ -554,6 +563,14 @@ impl DocumentMutator<'_> {
             return;
         }
 
+        #[cfg(feature = "ahcut")]
+        if element.name.ns == ns!(html)
+            && name.ns == ns!()
+            && (tag, attr) == tag_and_attr!("img", "src")
+        {
+            self.doc.select_html_image(node_id);
+            return;
+        }
         if *attr == local_name!("style") {
             element.flush_style_attribute(&self.doc.guard, &self.doc.url.url_extra_data());
             node.set_restyle_hint(RestyleHint::RESTYLE_STYLE_ATTRIBUTE);
@@ -1456,6 +1473,13 @@ impl<'doc> DocumentMutator<'doc> {
         let Some(element) = self.doc.nodes[target_id].element_data() else {
             return;
         };
+        #[cfg(feature = "ahcut")]
+        if element.name.ns == ns!(html) && element.name.local == local_name!("img") {
+            if element.image_selection.is_none() {
+                self.doc.select_html_image(target_id);
+            }
+            return;
+        }
         // A checked render records the external image of an SVG and never loads it (see `parse_svg`).
         if cfg!(feature = "ahcut") && element.name.ns == ns!(svg) {
             return;

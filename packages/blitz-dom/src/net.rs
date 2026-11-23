@@ -87,6 +87,8 @@ pub enum Resource {
     #[cfg(feature = "ahcut")]
     DeferredStylesheet(DeferredStylesheet),
     Image(ImageType, u32, u32, Arc<Vec<u8>>),
+    #[cfg(feature = "ahcut")]
+    ImageFacts(ImageType, blitz_traits::net::ImageFacts),
     #[cfg(feature = "svg")]
     Svg(ImageType, crate::node::SvgImageData),
     Css(DocumentStyleSheet),
@@ -164,7 +166,7 @@ impl<T: Send + Sync + 'static> ResourceHandler<T> {
         shell.request_redraw();
     }
 
-    fn respond(&self, resolved_url: String, result: Result<Resource, String>) {
+    pub(crate) fn respond(&self, resolved_url: String, result: Result<Resource, String>) {
         let response = ResourceLoadResponse {
             request_id: self.request_id,
             node_id: self.node_id,
@@ -705,6 +707,11 @@ impl ImageHandler {
 }
 
 impl NetHandler for ResourceHandler<ImageHandler> {
+    #[cfg(feature = "ahcut")]
+    fn error(self: Box<Self>, url: String, error: String) {
+        self.respond(url, Err(error));
+    }
+
     fn bytes(self: Box<Self>, resolved_url: String, bytes: Bytes) {
         let result = self.data.parse(bytes);
         self.respond(resolved_url, result)

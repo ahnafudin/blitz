@@ -342,6 +342,16 @@ pub struct BaseDocument {
     /// Value is a list of (node_id, image_type) pairs waiting for the image.
     pub(crate) pending_images: HashMap<String, Vec<(NodeId, ImageType)>>,
 
+    /// Image waiters use the requested URL, including when the response was redirected.
+    #[cfg(feature = "ahcut")]
+    pub(crate) image_requests: HashMap<usize, String>,
+    #[cfg(feature = "ahcut")]
+    pub(crate) image_selection_token: u64,
+    #[cfg(feature = "ahcut")]
+    pub(crate) image_completions: std::collections::VecDeque<(NodeId, u64)>,
+    #[cfg(feature = "ahcut")]
+    pub(crate) has_image_facts: bool,
+
     /// Nodes whose `background-image`/`mask-image` layers need flushing to
     /// dedicated storage on the node because their style changed (populated by
     /// the style traversal and by pseudo-element box construction).
@@ -519,6 +529,14 @@ impl BaseDocument {
             deferred_construction_nodes: Vec::new(),
             image_cache: HashMap::new(),
             pending_images: HashMap::new(),
+            #[cfg(feature = "ahcut")]
+            image_requests: HashMap::new(),
+            #[cfg(feature = "ahcut")]
+            image_selection_token: 0,
+            #[cfg(feature = "ahcut")]
+            image_completions: Default::default(),
+            #[cfg(feature = "ahcut")]
+            has_image_facts: false,
             pending_style_image_nodes: Vec::new(),
             pending_critical_resources: HashSet::new(),
             controls_to_form: HashMap::new(),
@@ -656,17 +674,32 @@ impl BaseDocument {
         tracing::info!("Fetching image {url}");
         self.pending_images
             .insert(url.as_str().to_string(), vec![waiting]);
-        self.net_provider.fetch(
+        let handler = Box::new(ResourceHandler::new(
+            self.tx.clone(),
             self.id(),
-            self.build_request(url),
-            ResourceHandler::boxed(
-                self.tx.clone(),
-                self.id(),
-                None, // Don't pass node_id, we'll handle it via pending_images
-                self.shell_provider.clone(),
-                ImageHandler::new(image_type),
-            ),
-        );
+            None,
+            self.shell_provider.clone(),
+            ImageHandler::new(image_type),
+        ));
+        #[cfg(feature = "ahcut")]
+        {
+            self.image_requests
+                .insert(handler.request_id(), url.to_string());
+            let result = match self.net_provider.image_facts(self.id(), &url) {
+                Ok(Some(facts)) if facts.width == 0 || facts.height == 0 => Some(Err(
+                    "IMAGE_REFUSED:use an image with positive intrinsic width and height".into(),
+                )),
+                Ok(Some(facts)) => Some(Ok(Resource::ImageFacts(image_type, facts))),
+                Err(error) => Some(Err(error)),
+                Ok(None) => None,
+            };
+            if let Some(result) = result {
+                handler.respond(url.into(), result);
+                return;
+            }
+        }
+        self.net_provider
+            .fetch(self.id(), self.build_request(url), handler);
     }
 
     pub fn favicon_url(&self) -> Option<String> {
@@ -1414,14 +1447,24 @@ impl BaseDocument {
             return;
         }
 
+        #[cfg(feature = "ahcut")]
+        let requested_image = self.image_requests.remove(&res.request_id);
         let resource = match res.result {
             Ok(resource) => resource,
             Err(err) => {
                 if let Some(face) = self.font_loads.lock().unwrap().get_mut(&res.request_id) {
                     face.status = crate::FontFaceLoadStatus::Error;
                 }
-                if let Some(url) = res.resolved_url.as_ref() {
+                #[cfg(feature = "ahcut")]
+                let failed_image = requested_image.as_ref();
+                #[cfg(not(feature = "ahcut"))]
+                let failed_image = res.resolved_url.as_ref();
+                if let Some(url) = failed_image {
                     let waiting_nodes = self.pending_images.remove(url).unwrap_or_default();
+                    #[cfg(feature = "ahcut")]
+                    for &(id, kind) in &waiting_nodes {
+                        self.fail_image_waiter(id, kind, url, &err);
+                    }
                     #[cfg(feature = "tracing")]
                     tracing::warn!(
                         url = url.as_str(),
@@ -1441,6 +1484,10 @@ impl BaseDocument {
             }
         };
 
+        #[cfg(feature = "ahcut")]
+        let image_url = requested_image.as_ref().or(res.resolved_url.as_ref());
+        #[cfg(not(feature = "ahcut"))]
+        let image_url = res.resolved_url.as_ref();
         match resource {
             #[cfg(feature = "ahcut")]
             Resource::DeferredStylesheet(parse) => parse.run(),
@@ -1456,11 +1503,18 @@ impl BaseDocument {
                 self.stylist
                     .force_stylesheet_origins_dirty(style::stylesheets::OriginSet::all());
             }
+            #[cfg(feature = "ahcut")]
+            Resource::ImageFacts(_, facts) => {
+                if let Some(url) = image_url {
+                    self.has_image_facts = true;
+                    self.apply_loaded_image(url, ImageData::Facts(facts));
+                }
+            }
             Resource::Image(_kind, width, height, image_data) => {
                 // Create the ImageData and cache it
                 let image = ImageData::Raster(RasterImageData::new(width, height, image_data));
 
-                let Some(url) = res.resolved_url.as_ref() else {
+                let Some(url) = image_url else {
                     return;
                 };
 
@@ -1471,7 +1525,7 @@ impl BaseDocument {
                 // Create the ImageData and cache it
                 let image = ImageData::Svg(svg);
 
-                let Some(url) = res.resolved_url.as_ref() else {
+                let Some(url) = image_url else {
                     return;
                 };
 
@@ -1553,6 +1607,16 @@ impl BaseDocument {
 
         // Apply to all waiting nodes
         for (node_id, image_type) in waiting_nodes {
+            #[cfg(feature = "ahcut")]
+            if image_type == ImageType::Image
+                && !self.complete_image_selection(
+                    node_id,
+                    Some(url),
+                    crate::ImageSelectionStatus::Loaded,
+                )
+            {
+                continue;
+            }
             let Some(node) = self.get_node_mut(node_id) else {
                 continue;
             };
@@ -1580,6 +1644,10 @@ impl BaseDocument {
                         images.get_mut(idx)
                     });
                     if let Some(Some(layer_image)) = layer_image {
+                        #[cfg(feature = "ahcut")]
+                        if layer_image.url.as_str() != url {
+                            continue;
+                        }
                         layer_image.status = Status::Ok;
                         layer_image.image = image.clone();
                     }

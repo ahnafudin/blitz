@@ -56,6 +56,10 @@ mod form;
 mod html;
 /// Loading of `<iframe>` elements into sub-documents.
 mod iframe;
+#[cfg(feature = "ahcut")]
+mod image_selection;
+#[cfg(feature = "ahcut")]
+pub use image_selection::{ImageSelection, ImageSelectionStatus};
 /// Integration of taffy and the DOM.
 mod layout;
 mod mutator;

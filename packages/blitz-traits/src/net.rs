@@ -13,11 +13,27 @@ use std::sync::{
 use std::{ops::Deref, path::PathBuf};
 pub use url::Url;
 
+/// Validated raster metadata for this document revision. Dimensions are oriented CSS pixels at 1×.
+#[cfg(feature = "ahcut")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ImageFacts {
+    pub asset: u32,
+    pub width: u32,
+    pub height: u32,
+    pub has_alpha: bool,
+}
+
 /// A type that fetches resources for a Document.
 ///
 /// This may be over the network via http(s), via the filesystem, or some other method.
 pub trait NetProvider: Send + Sync + 'static {
     fn fetch(&self, doc_id: usize, request: Request, handler: Box<dyn NetHandler>);
+
+    /// Return validated image metadata, select the ordinary byte loader, or fail the request.
+    #[cfg(feature = "ahcut")]
+    fn image_facts(&self, _doc_id: usize, _url: &Url) -> Result<Option<ImageFacts>, String> {
+        Ok(None)
+    }
 
     /// Whether this provider is a no-op (e.g. `DummyNetProvider`) that will never
     /// deliver resources. When true, callers must NOT register resources as

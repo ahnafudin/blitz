@@ -519,7 +519,7 @@ impl ElementCx<'_, '_> {
         let Some(bg_image) = layer.image_data else {
             return;
         };
-        let ImageData::Raster(image_data) = &bg_image.image else {
+        let Some((width, height)) = bg_image.image.intrinsic_raster_size() else {
             return;
         };
 
@@ -532,8 +532,8 @@ impl ElementCx<'_, '_> {
             (self.box_rect(layer.origin), self.transform)
         };
 
-        let image_width = image_data.width as f64;
-        let image_height = image_data.height as f64;
+        let image_width = f64::from(width);
+        let image_height = f64::from(height);
 
         let (bg_pos, bg_size) = compute_layer_position_and_size(
             layer,
@@ -544,6 +544,18 @@ impl ElementCx<'_, '_> {
 
         let bg_pos = (bg_pos.to_vec2() * self.scale).to_point();
         let bg_size = bg_size * self.scale;
+
+        let ImageData::Raster(image_data) = &bg_image.image else {
+            #[cfg(feature = "ahcut")]
+            if origin_rect.width() > 0.0
+                && origin_rect.height() > 0.0
+                && bg_size.width > 0.0
+                && bg_size.height > 0.0
+            {
+                self.refuse_image_facts();
+            }
+            return;
+        };
 
         let x_ratio = bg_size.width / image_width;
         let y_ratio = bg_size.height / image_height;
