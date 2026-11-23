@@ -227,6 +227,36 @@ fn reflected_properties_preserve_element_interfaces_and_connected_stylesheet_fre
 }
 
 #[test]
+fn every_connected_link_keeps_its_attributes_and_names_the_html_remedy() {
+    let mut doc = ScriptDocument::from_html(
+        "<!doctype html><link rel='icon' media='print' style='color:red'>",
+        DocumentConfig::default(),
+    );
+    doc.execute_scripts();
+    for write in [
+        "link.rel='help'",
+        "link.href='other.ico'",
+        "link.media='screen'",
+        "link.setAttribute('title','late')",
+        "link.removeAttribute('media')",
+        "link.style.color='blue'",
+        "link.style.removeProperty('color')",
+    ] {
+        let result = observe(
+            &mut doc,
+            &format!(
+                "(()=>{{const link=document.querySelector('link'),before=link.outerHTML;try{{{write};return 'accepted'}}catch(e){{return [String(e),link.outerHTML===before]}}}})()"
+            ),
+        );
+        assert_eq!(
+            result,
+            r#"["TypeError: STYLESHEET_REBUILD_REQUIRED: set link attributes in the HTML, not from script",true]"#,
+            "{write}"
+        );
+    }
+}
+
+#[test]
 fn linked_and_imported_css_use_the_stylesheet_encoding_for_admission() {
     struct Sheets;
     impl NetProvider for Sheets {
