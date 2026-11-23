@@ -24,8 +24,16 @@ pub struct ImageSelection {
 }
 
 impl BaseDocument {
-    pub fn has_image_facts(&self) -> bool {
-        self.has_image_facts
+    /// Only inspect nodes that received facts. A detached or replaced candidate can be discarded
+    /// here because a later insertion or assignment registers it again.
+    pub fn has_image_facts(&mut self) -> bool {
+        self.image_facts_nodes.retain(|&id| {
+            self.nodes.get(id).is_some_and(|node| {
+                node.flags.is_in_document()
+                    && node.element_data().is_some_and(|el| el.uses_image_facts())
+            })
+        });
+        !self.image_facts_nodes.is_empty()
     }
 
     pub fn image_selection(&self, id: NodeId) -> Option<&ImageSelection> {
@@ -73,10 +81,8 @@ impl BaseDocument {
         let node = &mut self.nodes[id];
         let element = node.element_data_mut().unwrap();
         element.image_selection = selection.map(Box::new);
-        element.special_data = SpecialElementData::None;
-        node.clear_layout_cache();
-        node.insert_damage(ALL_DAMAGE);
         let Some(url) = url else {
+            self.clear_current_image(id);
             self.complete_image_selection(
                 id,
                 None,
@@ -85,11 +91,26 @@ impl BaseDocument {
             return;
         };
         if let Some(image) = self.image_cache.get(url.as_str()).cloned() {
+            if matches!(image, ImageData::Facts(_)) {
+                self.image_facts_nodes.insert(id);
+            }
             self.nodes[id].element_data_mut().unwrap().special_data =
                 SpecialElementData::Image(Box::new(image));
+            self.nodes[id].clear_layout_cache();
+            self.nodes[id].insert_damage(ALL_DAMAGE);
             self.complete_image_selection(id, Some(url.as_str()), ImageSelectionStatus::Loaded);
         } else {
             self.fetch_image(url, id, ImageType::Image);
+        }
+    }
+
+    fn clear_current_image(&mut self, id: NodeId) {
+        let node = &mut self.nodes[id];
+        let el = node.element_data_mut().unwrap();
+        if matches!(el.special_data, SpecialElementData::Image(_)) {
+            el.special_data = SpecialElementData::None;
+            node.clear_layout_cache();
+            node.insert_damage(ALL_DAMAGE);
         }
     }
 
@@ -129,11 +150,13 @@ impl BaseDocument {
         };
         let layer = match kind {
             ImageType::Image => {
-                self.complete_image_selection(
+                if self.complete_image_selection(
                     id,
                     Some(url),
                     ImageSelectionStatus::Failed(error.to_owned()),
-                );
+                ) {
+                    self.clear_current_image(id);
+                }
                 return;
             }
             ImageType::Background(idx) => element.background_images.get_mut(idx),

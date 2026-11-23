@@ -35,7 +35,8 @@ type CustomWidgetSceneMap = HashMap<(usize, NodeId), Scene>;
 
 /// Refusal payload for a visible host image whose pixels are not yet available to this renderer.
 #[cfg(feature = "ahcut")]
-pub const IMAGE_REFUSED: &str = "IMAGE_REFUSED:write an SVG shape or omit the raster image until native image paint is available";
+pub const IMAGE_PAINT_PENDING: &str =
+    "IMAGE_PAINT_PENDING:draw the shape in SVG or omit the image until image paint lands";
 
 /// Paint a [`blitz_dom::BaseDocument`] by pushing drawing commands into
 /// an impl [`anyrender::PaintScene`].
@@ -134,6 +135,7 @@ pub fn try_paint_scene(
     #[cfg(feature = "custom-widget")]
     build_custom_widget_scenes(&mut custom_widget_scenes, doc, scene, scale);
 
+    let has_image_facts = doc.has_image_facts();
     let mut generator = BlitzDomPainter::new(
         doc,
         scale,
@@ -146,7 +148,7 @@ pub fn try_paint_scene(
     generator.checked_filters = true;
     // A cached image may be detached, hidden or superseded. Use the same clipped paint walk to
     // determine whether its brush is needed before publishing a single command to the caller.
-    if doc.has_image_facts() {
+    if has_image_facts {
         generator.paint_scene(&mut anyrender::NullScenePainter);
         if let Some(error) = generator.filter_error.borrow_mut().take() {
             return Err(error);

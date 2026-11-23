@@ -83,6 +83,21 @@ fn a_timer_microtask_can_cancel_another_due_callback() {
     assert!(doc.next_timer_deadline().is_none());
 }
 
+#[cfg(feature = "ahcut")]
+#[test]
+fn performance_instrumentation_is_inert_and_each_query_returns_a_fresh_list() {
+    let mut doc = document(500);
+    let observed = observe(
+        &mut doc,
+        r#"(()=>{
+        const p=performance, returns=[p.mark("start"),p.measure("total","start"),p.clearMarks(),p.clearMeasures()];
+        const first=p.getEntries(); first.push("local");
+        return [returns.every(v=>v===undefined),p.getEntries(),p.getEntriesByName("total"),p.getEntriesByType("mark"),p.now()];
+    })()"#,
+    );
+    assert_eq!(observed, "[true,[],[],[],0]");
+}
+
 #[test]
 fn explicit_epoch_is_visible_to_the_first_project_script_and_new_date() {
     for epoch in [-1, 0, 1_700_000_000_000, MAX_DATE_MILLIS] {

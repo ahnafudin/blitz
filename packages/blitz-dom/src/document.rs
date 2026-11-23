@@ -350,7 +350,7 @@ pub struct BaseDocument {
     #[cfg(feature = "ahcut")]
     pub(crate) image_completions: std::collections::VecDeque<(NodeId, u64)>,
     #[cfg(feature = "ahcut")]
-    pub(crate) has_image_facts: bool,
+    pub(crate) image_facts_nodes: HashSet<NodeId>,
 
     /// Nodes whose `background-image`/`mask-image` layers need flushing to
     /// dedicated storage on the node because their style changed (populated by
@@ -536,7 +536,7 @@ impl BaseDocument {
             #[cfg(feature = "ahcut")]
             image_completions: Default::default(),
             #[cfg(feature = "ahcut")]
-            has_image_facts: false,
+            image_facts_nodes: HashSet::new(),
             pending_style_image_nodes: Vec::new(),
             pending_critical_resources: HashSet::new(),
             controls_to_form: HashMap::new(),
@@ -1518,7 +1518,6 @@ impl BaseDocument {
             #[cfg(feature = "ahcut")]
             Resource::ImageFacts(_, facts) => {
                 if let Some(url) = image_url {
-                    self.has_image_facts = true;
                     self.apply_loaded_image(url, ImageData::Facts(facts));
                 }
             }
@@ -1664,6 +1663,10 @@ impl BaseDocument {
                         layer_image.image = image.clone();
                     }
                 }
+            }
+            #[cfg(feature = "ahcut")]
+            if matches!(image, ImageData::Facts(_)) {
+                self.image_facts_nodes.insert(node_id);
             }
         }
     }

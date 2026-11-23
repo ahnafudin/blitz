@@ -18,6 +18,8 @@ use crate::timers::TimerQueue;
 pub(crate) struct DomProtos {
     pub node: JsObject,
     pub element: JsObject,
+    #[cfg(feature = "ahcut")]
+    pub html_elements: HashMap<&'static str, JsObject>,
     pub character_data: JsObject,
     pub document: JsObject,
     pub event: JsObject,

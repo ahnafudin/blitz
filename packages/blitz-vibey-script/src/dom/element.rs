@@ -11,7 +11,7 @@ mod form_controls;
 mod geometry;
 mod markup;
 #[cfg(feature = "ahcut")]
-mod reflected_urls;
+pub(super) mod reflected_urls;
 mod scrolling;
 mod selectors;
 #[cfg(feature = "ahcut")]
@@ -344,8 +344,6 @@ pub(crate) fn init_element_proto(proto: &JsObject, context: &mut Context) {
     define_method(proto, "__blitz_svg_bbox", 0, svg::bbox, context);
     #[cfg(feature = "ahcut")]
     define_method(proto, "__blitz_svg_ctm", 0, svg::ctm, context);
-    #[cfg(feature = "ahcut")]
-    reflected_urls::init(proto, context);
     // ParentNode mixin mutation helpers
     define_method(proto, "append", 1, super::node::append, context);
     define_method(proto, "prepend", 1, super::node::prepend, context);

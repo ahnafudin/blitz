@@ -565,6 +565,17 @@ impl ElementData {
         self.element_state.set(ElementState::OPEN, is_open);
     }
 
+    #[cfg(feature = "ahcut")]
+    pub(crate) fn uses_image_facts(&self) -> bool {
+        matches!(self.image_data(), Some(ImageData::Facts(_)))
+            || self
+                .background_images
+                .iter()
+                .chain(self.mask_images.iter())
+                .flatten()
+                .any(|layer| matches!(layer.image, ImageData::Facts(_)))
+    }
+
     pub fn image_data(&self) -> Option<&ImageData> {
         match &self.special_data {
             SpecialElementData::Image(data) => Some(&**data),

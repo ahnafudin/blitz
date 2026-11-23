@@ -231,6 +231,13 @@ fn the_src_property_is_the_src_attribute_and_starts_the_same_load() {
     assert_eq!(
         observe(
             &mut doc,
+            "['img','source','video','div'].map(tag=>{const el=document.createElement(tag);return ['src' in el,'srcset' in el]})"
+        ),
+        "[[true,true],[true,true],[true,false],[false,false]]"
+    );
+    assert_eq!(
+        observe(
+            &mut doc,
             "(()=>{const [a,b,d]=['a','b','d'].map(id=>document.getElementById(id));const before=[a.src,d.src];a.setAttribute('src','one.png');b.src='two.png';const late=document.createElement('img');late.src='three.png';document.body.appendChild(late);b.srcset='two.png 2x';d.src='four.png';return [before,a.src,b.src,b.getAttribute('src'),late.getAttribute('src'),b.srcset,b.getAttribute('srcset'),d.src,d.getAttribute('src')]})()"
         ),
         r#"[["",null],"https://ahcut.invalid/page/one.png","https://ahcut.invalid/page/two.png","two.png","three.png","two.png 2x","two.png 2x","four.png",null]"#

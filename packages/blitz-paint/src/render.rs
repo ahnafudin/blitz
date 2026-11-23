@@ -1444,7 +1444,7 @@ impl ElementCx<'_, '_> {
     fn refuse_image_facts(&self) {
         if self.context.checked_filters {
             self.context.filter_error.borrow_mut().get_or_insert(
-                anyrender::filters::FilterError::Unsupported(crate::IMAGE_REFUSED),
+                anyrender::filters::FilterError::Unsupported(crate::IMAGE_PAINT_PENDING),
             );
         }
     }

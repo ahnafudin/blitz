@@ -98,6 +98,16 @@ fn selected_image_completion_covers_reselection_cache_failure_and_detached_eleme
     // Replace an already queued completion before its callback can run.
     let failed = select(&mut doc, b, "zero");
     assert_ne!(peer, failed);
+    assert_eq!(
+        doc.get_node(b)
+            .unwrap()
+            .element_data()
+            .unwrap()
+            .image_data()
+            .and_then(ImageData::intrinsic_raster_size),
+        Some((20, 60)),
+        "the current image remains available until the replacement completes"
+    );
     assert_eq!(doc.pop_image_completion(), Some((detached, detached_token)));
     assert!(doc.pop_image_completion().is_none());
     doc.handle_messages();
@@ -236,7 +246,7 @@ fn one_lookup_sizes_images_and_refuses_only_when_the_facts_are_painted() {
         assert_eq!(
             refusal,
             anyrender::filters::FilterError::Unsupported(
-                "IMAGE_REFUSED:write an SVG shape or omit the raster image until native image paint is available"
+                "IMAGE_PAINT_PENDING:draw the shape in SVG or omit the image until image paint lands"
             )
         );
         assert!(scene.commands.is_empty());
@@ -245,4 +255,20 @@ fn one_lookup_sizes_images_and_refuses_only_when_the_facts_are_painted() {
     }
     blitz_paint::try_paint_scene(&mut scene, &mut doc, 1., 200, 200, 0, 0).unwrap();
     assert!(!scene.commands.is_empty());
+    let body = doc.query_selector("body").unwrap().unwrap();
+    for id in [natural, small, bg] {
+        doc.mutate().remove_node(id);
+    }
+    assert!(
+        !doc.has_image_facts(),
+        "cached URLs and detached nodes do not require a paint preflight"
+    );
+    doc.mutate().append_children(body, &[small]);
+    assert!(
+        doc.has_image_facts(),
+        "reattaching a cached image restores the preflight"
+    );
+    doc.mutate()
+        .clear_attribute(small, QualName::new(None, ns!(), local_name!("src")));
+    assert!(!doc.has_image_facts());
 }

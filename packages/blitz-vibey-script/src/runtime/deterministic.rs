@@ -7,14 +7,38 @@ use boa_engine::{Context, JsResult, JsValue, NativeFunction, js_string};
 use crate::dom::dom_ctx;
 
 pub(super) fn install(epoch: i64, context: &mut Context) {
-    let performance = ObjectInitializer::new(context)
+    let mut performance = ObjectInitializer::new(context);
+    performance
         .property(
             js_string!("timeOrigin"),
             epoch as f64,
             Attribute::CONFIGURABLE,
         )
-        .function(NativeFunction::from_fn_ptr(now), js_string!("now"), 0)
-        .build();
+        .function(NativeFunction::from_fn_ptr(now), js_string!("now"), 0);
+    for (method, length) in [
+        ("mark", 1),
+        ("measure", 1),
+        ("clearMarks", 0),
+        ("clearMeasures", 0),
+    ] {
+        performance.function(
+            NativeFunction::from_fn_ptr(ignore_measurement),
+            boa_engine::JsString::from(method),
+            length,
+        );
+    }
+    for (method, length) in [
+        ("getEntries", 0),
+        ("getEntriesByName", 1),
+        ("getEntriesByType", 1),
+    ] {
+        performance.function(
+            NativeFunction::from_fn_ptr(empty_entries),
+            boa_engine::JsString::from(method),
+            length,
+        );
+    }
+    let performance = performance.build();
     context
         .register_global_property(
             js_string!("performance"),
@@ -38,6 +62,14 @@ pub(super) fn install(epoch: i64, context: &mut Context) {
 
 fn now(_: &JsValue, _: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
     Ok(dom_ctx(context)?.state.borrow().elapsed_millis().into())
+}
+
+fn ignore_measurement(_: &JsValue, _: &[JsValue], _: &mut Context) -> JsResult<JsValue> {
+    Ok(JsValue::undefined())
+}
+
+fn empty_entries(_: &JsValue, _: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
+    Ok(boa_engine::object::builtins::JsArray::new(context).into())
 }
 
 fn random(_: &JsValue, _: &[JsValue], context: &mut Context) -> JsResult<JsValue> {

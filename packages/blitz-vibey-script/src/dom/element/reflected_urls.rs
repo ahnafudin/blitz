@@ -2,50 +2,39 @@
 //! content attribute, so `img.src = url` starts the load that `setAttribute('src', url)` starts.
 use super::attributes::{read_attr, write_attr};
 use crate::dom::{define_accessor, dom_ctx, js_str, this_node_id, to_rust_string};
-use crate::state::DomCtx;
-use blitz_dom::NodeId;
 use boa_engine::object::JsObject;
-use boa_engine::{Context, JsResult, JsString, JsValue};
+use boa_engine::{Context, JsResult, JsValue};
 use url::Url;
 
-pub(super) fn init(proto: &JsObject, context: &mut Context) {
-    define_accessor(proto, "src", Some(get_src), Some(set_src), context);
-    define_accessor(proto, "srcset", Some(get_srcset), Some(set_srcset), context);
-}
-
-/// Whether the element's interface reflects the content attribute `name`. Any other element keeps a plain
-/// property of that name, as in a browser.
-fn reflects(ctx: &DomCtx, node_id: NodeId, name: &str) -> bool {
-    let doc = ctx.doc.borrow();
-    let Some(element) = doc.get_node(node_id).and_then(|node| node.element_data()) else {
-        return false;
-    };
-    let tag = element.name.local.as_ref();
-    element.name.ns == markup5ever::ns!(html)
-        && match name {
-            "src" => matches!(
-                tag,
-                "img"
-                    | "iframe"
-                    | "script"
-                    | "embed"
-                    | "source"
-                    | "video"
-                    | "audio"
-                    | "track"
-                    | "input"
-            ),
-            _ => matches!(tag, "img" | "source"),
+pub(in crate::dom) fn prototypes(
+    base: &JsObject,
+    context: &mut Context,
+) -> std::collections::HashMap<&'static str, JsObject> {
+    let mut prototypes = std::collections::HashMap::new();
+    for tag in [
+        "img", "iframe", "script", "embed", "source", "video", "audio", "track", "input",
+    ] {
+        let proto = JsObject::with_object_proto(context.intrinsics());
+        proto.set_prototype(Some(base.clone()));
+        define_accessor(&proto, "src", Some(get_src), Some(set_src), context);
+        if matches!(tag, "img" | "source") {
+            define_accessor(
+                &proto,
+                "srcset",
+                Some(get_srcset),
+                Some(set_srcset),
+                context,
+            );
         }
+        prototypes.insert(tag, proto);
+    }
+    prototypes
 }
 
 /// `src` reads as a URL resolved against the document's base URL; `srcset` reads as it is written.
 fn get(name: &str, this: &JsValue, context: &mut Context) -> JsResult<JsValue> {
     let ctx = dom_ctx(context)?;
     let node_id = this_node_id(this)?;
-    if !reflects(&ctx, node_id, name) {
-        return Ok(JsValue::undefined());
-    }
     let Some(value) = read_attr(&ctx, node_id, name) else {
         return Ok(js_str(""));
     };
@@ -65,12 +54,8 @@ fn set(name: &str, this: &JsValue, args: &[JsValue], context: &mut Context) -> J
     let ctx = dom_ctx(context)?;
     let node_id = this_node_id(this)?;
     let value = args.first().cloned().unwrap_or_default();
-    if reflects(&ctx, node_id, name) {
-        let value = to_rust_string(&value, context)?;
-        write_attr(&ctx, node_id, name, &value);
-    } else if let Some(object) = this.as_object() {
-        object.create_data_property_or_throw(JsString::from(name), value, context)?;
-    }
+    let value = to_rust_string(&value, context)?;
+    write_attr(&ctx, node_id, name, &value);
     Ok(JsValue::undefined())
 }
 

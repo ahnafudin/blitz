@@ -1247,6 +1247,10 @@ impl<'doc> DocumentMutator<'doc> {
                 return;
             };
 
+            #[cfg(feature = "ahcut")]
+            if element.uses_image_facts() {
+                doc.image_facts_nodes.insert(node_id);
+            }
             // Custom widgets replace the element's built-in tag-specific behaviour
             #[cfg(feature = "custom-widget")]
             let has_custom_widget = element.custom_widget_data().is_some();

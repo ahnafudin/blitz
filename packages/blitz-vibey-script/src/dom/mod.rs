@@ -77,6 +77,12 @@ pub(crate) fn node_wrapper(ctx: &DomCtx, node_id: NodeId, context: &mut Context)
         let node_data = doc.get_node(node_id).map(|node| &node.data);
         let proto = match node_data {
             Some(NodeData::Document(_)) => protos.document.clone(),
+            #[cfg(feature = "ahcut")]
+            Some(NodeData::Element(element)) if element.name.ns == markup5ever::ns!(html) => protos
+                .html_elements
+                .get::<str>(element.name.local.as_ref())
+                .unwrap_or(&protos.element)
+                .clone(),
             Some(NodeData::Element(_)) | Some(NodeData::AnonymousBlock(_)) => {
                 protos.element.clone()
             }
@@ -383,7 +389,11 @@ pub(crate) fn init_protos(ctx: &DomCtx, context: &mut Context) {
 
     let _ = object_proto;
 
+    #[cfg(feature = "ahcut")]
+    let html_elements = element::reflected_urls::prototypes(&element_proto, context);
     ctx.state.borrow_mut().protos = Some(DomProtos {
+        #[cfg(feature = "ahcut")]
+        html_elements,
         node: node_proto,
         element: element_proto,
         character_data: character_data_proto,

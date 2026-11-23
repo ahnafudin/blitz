@@ -590,6 +590,10 @@ impl BaseDocument {
                     // Check cache first
                     let url_str = new_url.as_str();
                     if let Some(cached_image) = self.image_cache.get(url_str) {
+                        #[cfg(feature = "ahcut")]
+                        if matches!(cached_image, crate::node::ImageData::Facts(_)) {
+                            self.image_facts_nodes.insert(node_id);
+                        }
                         #[cfg(feature = "tracing")]
                         tracing::info!("Loading image {url_str} from cache");
                         Some(ImageResourceData {
