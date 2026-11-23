@@ -1051,6 +1051,7 @@ dependencies = [
  "anyrender",
  "anyrender_svg",
  "blitz-dom",
+ "blitz-html",
  "blitz-traits",
  "bytemuck",
  "color",
