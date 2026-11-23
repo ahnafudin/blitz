@@ -7,6 +7,7 @@ use anyrender::recording::RenderCommand;
 use blitz_dom::DocumentConfig;
 use blitz_html::HtmlDocument;
 use blitz_traits::shell::Viewport;
+use kurbo::Shape;
 
 fn paint(filter: &str, scale: f64) -> Result<Scene, FilterError> {
     let html = format!(
@@ -16,8 +17,12 @@ fn paint(filter: &str, scale: f64) -> Result<Scene, FilterError> {
          #child{{position:absolute;left:46px;top:2px;width:6px;height:6px;background:lime}}
          </style><div id=target><div id=child></div></div>"
     );
+    paint_html(&html, scale)
+}
+
+fn paint_html(html: &str, scale: f64) -> Result<Scene, FilterError> {
     let mut doc = HtmlDocument::from_html(
-        &html,
+        html,
         DocumentConfig {
             viewport: Some(Viewport {
                 window_size: (240, 200),
@@ -66,11 +71,28 @@ fn blur_zero_and_the_css_default_do_not_refuse_paint() {
 }
 
 #[test]
-fn the_outer_shadow_is_part_of_the_css_filters_source() {
-    let scene = paint("blur(4px)", 1.0).unwrap();
+fn outlines_and_outset_shadows_are_in_the_source_of_css_and_svg_filters() {
+    for filter in ["blur(4px)", "url(#soft)"] {
+        let scene = paint_html(
+            &format!(
+                r##"<!doctype html>
+            <svg width="0" height="0"><defs><filter id="soft">
+            <feGaussianBlur stdDeviation="4"/></filter></defs></svg>
+            <div style="width:24px;height:12px;outline:3px solid red;
+            box-shadow:0 1px 3px blue;filter:{filter}"></div>"##
+            ),
+            1.0,
+        )
+        .unwrap();
+        assert_grouped_decoration(&scene);
+    }
+}
+
+fn assert_grouped_decoration(scene: &Scene) {
     let mut filters = Vec::new();
     let mut shadow_count = 0;
-    for command in scene.commands {
+    let mut outline_count = 0;
+    for command in &scene.commands {
         match command {
             RenderCommand::PushLayer(layer) => filters.push(layer.filter.is_some()),
             RenderCommand::PushClipLayer(_) | RenderCommand::PushMaskLayer(_) => {
@@ -86,11 +108,105 @@ fn the_outer_shadow_is_part_of_the_css_filters_source() {
                 );
                 shadow_count += 1;
             }
+            RenderCommand::Fill(fill) if fill.shape.bounding_box().width() == 30.0 => {
+                assert!(
+                    filters.contains(&true),
+                    "outline painted outside the filter"
+                );
+                outline_count += 1;
+            }
             _ => {}
         }
     }
     assert_eq!(shadow_count, 1);
+    assert_eq!(outline_count, 1);
     assert!(filters.is_empty());
+}
+
+#[test]
+fn independent_small_boxes_only_allocate_their_own_ink_and_halo() {
+    let scene = paint_html(
+        "<!doctype html><style>
+        .tile{position:absolute;top:40px;width:12px;height:9px;background:green;filter:blur(2px)}
+        .tile i{position:absolute;left:15px;width:5px;height:4px;background:red;
+        outline:2px solid blue;box-shadow:8px 0 4px black}
+        </style><div class=tile style='left:40px'><i></i></div>
+        <div class=tile style='left:120px'><i></i></div>",
+        1.0,
+    )
+    .unwrap();
+    let mut crops = 0;
+    for command in scene.commands {
+        let RenderCommand::PushLayer(layer) = command else {
+            continue;
+        };
+        let Some(graph) = layer.filter else { continue };
+        let crop = graph.output_region().unwrap();
+        // The child's far edge (20) plus the shadow offset (8), the shadow halo
+        // (6), and the filter halo (6) are all inside the target's local crop.
+        assert!(crop.x0 <= -6.0 && crop.x1 >= 40.0, "{crop:?}");
+        assert!(crop.width() <= 52.0 && crop.height() <= 38.0, "{crop:?}");
+        crops += 1;
+    }
+    assert_eq!(crops, 2);
+}
+
+#[test]
+fn transformed_blur_keeps_a_near_source_and_culls_a_distant_one() {
+    let scene = paint_html(
+        "<!doctype html><style>body{margin:0}
+        #f{position:absolute;left:220px;top:20px;width:8px;height:8px;
+        transform-origin:0 0;transform:rotate(90deg) scale(2);filter:blur(5px)}
+        #f div{position:absolute;left:0;height:4px;background:red}
+        </style><div id=f><div style='top:-15px;width:3px'></div>
+        <div style='top:-60px;width:7px'></div></div>",
+        1.0,
+    )
+    .unwrap();
+    let mut near = false;
+    let mut far = false;
+    let mut saw_transform = false;
+    for command in scene.commands {
+        match command {
+            RenderCommand::PushLayer(layer) if layer.filter.is_some() => {
+                let [a, b, c, d, _, _] = layer.transform.as_coeffs();
+                assert!(
+                    a.abs() < 0.001
+                        && d.abs() < 0.001
+                        && (b - 2.0).abs() < 0.001
+                        && (c + 2.0).abs() < 0.001
+                );
+                saw_transform = true;
+            }
+            RenderCommand::Fill(fill) => {
+                let bounds = fill.shape.bounding_box();
+                if bounds.height() == 4.0 {
+                    near |= bounds.width() == 3.0;
+                    far |= bounds.width() == 7.0;
+                }
+            }
+            _ => {}
+        }
+    }
+    assert!(saw_transform && near && !far);
+}
+
+#[test]
+fn a_singular_blurred_box_has_no_output() {
+    let scene = paint_html(
+        "<!doctype html><div style='width:37px;height:19px;
+        background:red;box-shadow:1px 1px 4px black;transform:scale(0);filter:blur(5px)'></div>",
+        1.0,
+    )
+    .unwrap();
+    for command in scene.commands {
+        match command {
+            RenderCommand::PushLayer(layer) => assert!(layer.filter.is_none()),
+            RenderCommand::BoxShadow(_) => panic!("singular shadow painted"),
+            RenderCommand::Fill(fill) => assert_ne!(fill.shape.bounding_box().width(), 37.0),
+            _ => {}
+        }
+    }
 }
 
 #[test]
