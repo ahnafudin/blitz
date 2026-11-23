@@ -33,6 +33,8 @@ pub(crate) mod image_events;
 pub(crate) mod images;
 mod modules;
 #[cfg(feature = "ahcut")]
+mod rejections;
+#[cfg(feature = "ahcut")]
 mod sample;
 mod timers;
 mod window;
@@ -70,7 +72,9 @@ pub(crate) struct ScriptRuntime {
     #[cfg(feature = "ahcut")]
     font_poll: Option<boa_engine::object::JsObject>,
     #[cfg(feature = "ahcut")]
-    host_sdk: Option<boa_engine::object::JsObject>,
+    pub(super) host_sdk: Option<boa_engine::object::JsObject>,
+    #[cfg(feature = "ahcut")]
+    rejections: Rc<rejections::Rejections>,
 }
 
 impl ScriptRuntime {
@@ -98,11 +102,14 @@ impl ScriptRuntime {
         let clock = crate::clock::BoaClockAdapter::new(clock);
         #[cfg(feature = "ahcut")]
         let epoch = clock.base_system_millis;
-        let mut context = Context::builder()
+        let builder = Context::builder()
             .module_loader(module_loader.clone())
-            .clock(Rc::new(clock))
-            .build()
-            .expect("failed to build JS context");
+            .clock(Rc::new(clock));
+        #[cfg(feature = "ahcut")]
+        let rejections = Rc::new(rejections::Rejections::default());
+        #[cfg(feature = "ahcut")]
+        let builder = builder.host_hooks(rejections.clone());
+        let mut context = builder.build().expect("failed to build JS context");
         context.insert_data(ctx.clone());
 
         Console::register_with_logger(LogCrateLogger, &mut context)
@@ -146,6 +153,8 @@ impl ScriptRuntime {
             font_poll: None,
             #[cfg(feature = "ahcut")]
             host_sdk: None,
+            #[cfg(feature = "ahcut")]
+            rejections,
         };
 
         // Install JavaScript APIs after the native bindings.
@@ -202,6 +211,12 @@ impl ScriptRuntime {
 
     /// Run pending promise jobs (microtasks)
     pub fn run_jobs(&mut self, description: &str) {
+        self.drain_jobs(description);
+        #[cfg(feature = "ahcut")]
+        self.finish_rejections(None);
+    }
+
+    fn drain_jobs(&mut self, description: &str) {
         #[cfg(feature = "ahcut")]
         self.poll_font_loads();
         if let Err(error) = self.context.run_jobs() {

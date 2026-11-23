@@ -17,11 +17,41 @@ use crate::state::{DomCtx, Listener};
 /// steps) so that `window.onerror` / `addEventListener("error")` handlers
 /// observe it.
 pub(super) fn report_js_error(ctx: &DomCtx, context: &mut Context, what: &str, error: &JsError) {
+    report_js_error_to_host(ctx, context, what, error, false);
+}
+
+/// Preserve the original reason when a promise is still rejected at the end of its turn.
+#[cfg(feature = "ahcut")]
+pub(super) fn report_unhandled_rejection(ctx: &DomCtx, context: &mut Context, error: &JsError) {
+    report_js_error_to_host(ctx, context, "unhandled promise rejection", error, true);
+}
+
+fn report_js_error_to_host(
+    ctx: &DomCtx,
+    context: &mut Context,
+    what: &str,
+    error: &JsError,
+    _is_rejection: bool,
+) {
     #[cfg(feature = "tracing")]
     tracing::error!("Uncaught JS error in {what}: {error}");
     let message = format!("Uncaught JS error in {what}: {error}");
     #[cfg(feature = "ahcut")]
     let message = crate::refusal::uncaught(message, error, context);
+    #[cfg(feature = "ahcut")]
+    if _is_rejection {
+        let mut state = ctx.state.borrow_mut();
+        if message.refusal.is_some() {
+            state.record_error(message);
+        } else {
+            // Retain one bounded example. Warning volume cannot displace a tagged exception.
+            let (_, count) = state
+                .rejection_warnings
+                .get_or_insert_with(|| (message.message.chars().take(512).collect(), 0));
+            *count = count.saturating_add(1);
+        }
+        return;
+    }
     let already_dispatching = {
         let mut state = ctx.state.borrow_mut();
         state.record_error(message);

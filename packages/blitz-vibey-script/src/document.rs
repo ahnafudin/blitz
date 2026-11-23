@@ -348,6 +348,28 @@ impl ScriptDocument {
         self.runtime.call_host_sdk(method);
     }
 
+    /// Read a fixed-size array of counts from a private SDK method, without a microtask checkpoint.
+    #[cfg(feature = "ahcut")]
+    pub fn host_sdk_counters<const N: usize>(&mut self, method: &str) -> Option<[u32; N]> {
+        crate::refusal::counters(
+            self.runtime.host_sdk.as_ref(),
+            method,
+            &mut self.runtime.context,
+        )
+    }
+
+    /// First ordinary unhandled rejection and total count since the last drain.
+    /// Tagged native rejections enter the ordered error queue.
+    #[cfg(feature = "ahcut")]
+    pub fn take_rejection_warnings(&mut self) -> Option<(String, u32)> {
+        self.runtime
+            .ctx
+            .state
+            .borrow_mut()
+            .rejection_warnings
+            .take()
+    }
+
     /// Evaluate arbitrary JavaScript code in the document's script context
     pub fn eval(&mut self, code: &str) {
         self.runtime.sync_named_element_globals();

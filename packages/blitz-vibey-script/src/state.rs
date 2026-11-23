@@ -128,6 +128,8 @@ pub(crate) struct RuntimeState {
     /// listeners, timer callbacks and promise jobs). Drained with
     /// [`ScriptDocument::take_js_errors`](crate::ScriptDocument::take_js_errors).
     pub uncaught_errors: Vec<UncaughtScriptError>,
+    #[cfg(feature = "ahcut")]
+    pub rejection_warnings: Option<(String, u32)>,
     /// Set while a window `error` event is being dispatched for an uncaught
     /// exception, so that exceptions thrown by `error` handlers themselves are
     /// only recorded and not re-dispatched

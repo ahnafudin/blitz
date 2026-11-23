@@ -119,7 +119,9 @@ impl ScriptRuntime {
         }
 
         let promise = module.load_link_evaluate(&mut self.context);
-        self.run_jobs(&description);
+        self.drain_jobs(&description);
+        #[cfg(feature = "ahcut")]
+        self.finish_rejections(Some(&promise));
         if let PromiseState::Rejected(reason) = promise.state() {
             report_js_error(
                 &self.ctx,

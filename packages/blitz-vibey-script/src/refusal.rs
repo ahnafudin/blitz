@@ -1,7 +1,10 @@
 //! Keep native refusals attached to their JavaScript exception objects across catches and rethrows.
 use boa_engine::{
     Context, JsError, JsNativeError, JsResult, JsString, JsValue, NativeFunction, Source,
-    object::{FunctionObjectBuilder, JsObject, builtins::JsWeakMap},
+    object::{
+        FunctionObjectBuilder, JsObject,
+        builtins::{JsArray, JsWeakMap},
+    },
 };
 
 use crate::UncaughtScriptError;
@@ -59,15 +62,38 @@ pub(crate) fn call_sdk(
     host: Option<&JsObject>,
     method: &str,
     context: &mut Context,
-) -> JsResult<()> {
+) -> JsResult<JsValue> {
     let host =
         host.ok_or_else(|| JsNativeError::typ().with_message("the host SDK is unavailable"))?;
     let callback = host
         .get(JsString::from(method), context)?
         .as_callable()
         .ok_or_else(|| JsNativeError::typ().with_message("the host SDK method must be callable"))?;
-    callback.call(&host.clone().into(), &[], context)?;
-    Ok(())
+    callback.call(&host.clone().into(), &[], context)
+}
+
+/// Read a dense, fixed-size array of native nonnegative integer counters without coercion.
+pub(crate) fn counters<const N: usize>(
+    host: Option<&JsObject>,
+    method: &str,
+    context: &mut Context,
+) -> Option<[u32; N]> {
+    let value = call_sdk(host, method, context).ok()?;
+    let array = JsArray::from_object(value.as_object()?).ok()?;
+    if array.length(context).ok()? != N as u64 {
+        return None;
+    }
+    let mut counters = [0; N];
+    for (index, out) in counters.iter_mut().enumerate() {
+        let key = u32::try_from(index).ok()?;
+        let property = array.borrow().properties().get(&key.into())?;
+        let number = property.value()?.as_number()?;
+        if !(0.0..=f64::from(u32::MAX)).contains(&number) || number.fract() != 0.0 {
+            return None;
+        }
+        *out = number as u32;
+    }
+    Some(counters)
 }
 
 pub(crate) fn uncaught(

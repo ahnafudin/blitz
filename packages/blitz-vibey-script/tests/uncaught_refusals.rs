@@ -160,3 +160,67 @@ fn the_typed_and_text_drains_share_the_bound_and_the_overflow_marker() {
     assert!(entries.iter().all(|entry| entry.refusal.is_none()));
     assert!(doc.take_js_errors().is_empty());
 }
+
+#[test]
+fn private_sdk_counters_require_a_dense_array_of_exact_unsigned_integers() {
+    let mut doc = document();
+    doc.install_host_sdk("() => ({valid: () => [0, 4294967295], negative: () => [-1, 1], fraction: () => [1, 0.1], wide: () => [0, 4294967296], sparse: () => Array(2), text: () => ['0', 1], short: () => [1], accessor: () => Object.defineProperty([0, 1], 0, {get() {return 0}})})");
+    assert_eq!(doc.host_sdk_counters("valid"), Some([0, u32::MAX]));
+    for method in [
+        "negative", "fraction", "wide", "sparse", "text", "short", "accessor", "absent",
+    ] {
+        assert_eq!(doc.host_sdk_counters::<2>(method), None, "{method}");
+    }
+}
+
+#[test]
+fn only_rejections_still_unhandled_after_microtasks_are_reported() {
+    let mut doc = document();
+    doc.install_host_sdk("make => { globalThis.decline = msg => { throw make(msg) } }");
+    doc.eval("const handled = Promise.reject('caught'); Promise.resolve().then(() => handled.catch(() => {})); Promise.resolve().then(() => decline('caught:tag')).catch(() => {})");
+    assert!(doc.take_uncaught_errors().is_empty());
+    assert!(doc.take_rejection_warnings().is_none());
+    doc.eval("Promise.reject('ordinary reason'); Promise.resolve().then(() => decline('ONE:first')); Promise.reject('second warning'); (async () => decline('TWO:second'))()");
+    let errors = doc.take_uncaught_errors();
+    assert_eq!(
+        errors
+            .iter()
+            .map(|e| e.refusal.as_deref())
+            .collect::<Vec<_>>(),
+        [Some("TWO:second"), Some("ONE:first")]
+    );
+    let (message, count) = doc.take_rejection_warnings().unwrap();
+    assert!(message.contains("ordinary reason"));
+    assert_eq!(count, 2);
+    assert!(doc.take_rejection_warnings().is_none());
+}
+
+#[test]
+fn runtime_owned_module_and_sample_rejections_have_one_report() {
+    let mut doc = ScriptDocument::from_html(
+        "<body><script type='module'>throw Error('module failed')</script></body>",
+        Default::default(),
+    );
+    doc.execute_scripts();
+    let errors = doc.take_uncaught_errors();
+    assert_eq!(errors.len(), 1, "{errors:?}");
+    assert!(doc.take_rejection_warnings().is_none());
+    doc.install_host_sdk(
+        "make => { globalThis.decline = () => { throw make('SAMPLE:use another value') } }",
+    );
+    doc.eval("function __seek() {}");
+    for (hook, expected) in [
+        ("async () => { throw Error('sample failed') }", None),
+        ("async () => decline()", Some("SAMPLE:use another value")),
+    ] {
+        doc.eval(&format!("globalThis.__settle = {hook}"));
+        doc.begin_sample_hook();
+        doc.start_sample(0.0).unwrap();
+        assert!(doc.sample_settled().unwrap());
+        let errors = doc.take_uncaught_errors();
+        assert_eq!(errors.len(), 1);
+        assert_eq!(errors[0].refusal.as_deref(), expected);
+        assert!(doc.take_rejection_warnings().is_none());
+        doc.finish_sample_hook();
+    }
+}
