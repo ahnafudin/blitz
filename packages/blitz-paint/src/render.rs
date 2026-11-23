@@ -138,6 +138,9 @@ pub struct BlitzDomPainter<'dom, 'a> {
     /// Set by `try_paint_scene`.
     #[cfg(feature = "ahcut")]
     pub(crate) checked_filters: bool,
+    /// Local ink bounds used for CSS filter crops, shared across both checked paint walks.
+    #[cfg(feature = "ahcut")]
+    ink_bounds: RefCell<HashMap<NodeId, Option<Rect>>>,
     /// Reusable scratch allocations shared by all text layouts painted for this document.
     pub(crate) draw_text_context: RefCell<DrawTextContext>,
     /// Cached selection ranges for O(1) lookup: node_id -> (start_offset, end_offset)
@@ -202,6 +205,8 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
             filter_error: RefCell::new(None),
             #[cfg(feature = "ahcut")]
             checked_filters: false,
+            #[cfg(feature = "ahcut")]
+            ink_bounds: RefCell::default(),
             draw_text_context: RefCell::new(DrawTextContext::default()),
             selection_ranges,
             custom_widget_scenes,
@@ -270,7 +275,11 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
                 x: self.initial_x - (viewport_scroll.x * self.scale),
                 y: self.initial_y - (viewport_scroll.y * self.scale),
             }),
-            viewport_clip_rect,
+            CullClip {
+                bounds: viewport_clip_rect,
+                #[cfg(feature = "ahcut")]
+                in_blur_source: false,
+            },
         );
 
         // Render debug overlay
@@ -459,8 +468,9 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
         scene: &mut impl PaintScene,
         node_id: NodeId,
         parent_style_transform: Affine,
-        clip_rect: Rect,
+        cull: CullClip,
     ) {
+        let clip_rect = cull.bounds;
         let node = &self.dom.as_ref().tree()[node_id];
 
         // Early return if the element is hidden
@@ -542,11 +552,13 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
             })
             .flatten();
         #[cfg(feature = "ahcut")]
-        let (filter_outer_decoration, clip_rect) = match css_blur {
-            Some(_) if screen_transform.determinant() == 0.0 => return,
-            Some(blur) => (true, blur.source_clip),
-            None => (false, clip_rect),
-        };
+        if css_blur.is_some() && screen_transform.determinant() == 0.0 {
+            return;
+        }
+        #[cfg(feature = "ahcut")]
+        let clip_rect = css_blur.map_or(clip_rect, |blur| blur.source_clip);
+        #[cfg(feature = "ahcut")]
+        let filter_outer_decoration = self.checked_filters && !effects.filter.0.is_empty();
         #[cfg(not(feature = "ahcut"))]
         let filter_outer_decoration = false;
 
@@ -558,13 +570,25 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
         let may_cull = !self.checked_filters || effects.filter.0.is_empty();
         #[cfg(not(feature = "ahcut"))]
         let may_cull = true;
-        if may_cull
-            && (screen_bbox.x1 < clip_rect.x0
-                || screen_bbox.x0 > clip_rect.x1
-                || screen_bbox.y1 < clip_rect.y0
-                || screen_bbox.y0 > clip_rect.y1)
-        {
-            return;
+        let outside_clip = |rect: Rect| {
+            rect.x1 < clip_rect.x0
+                || rect.x0 > clip_rect.x1
+                || rect.y1 < clip_rect.y0
+                || rect.y0 > clip_rect.y1
+        };
+        if may_cull && outside_clip(screen_bbox) {
+            // A source outside the expanded clip may still cast a shadow or draw
+            // an overhanging glyph into the blur. Cull only when its ink also misses.
+            #[cfg(feature = "ahcut")]
+            let can_skip = !cull.in_blur_source
+                || self
+                    .source_ink(node)
+                    .is_some_and(|ink| outside_clip(screen_transform.transform_rect_bbox(ink)));
+            #[cfg(not(feature = "ahcut"))]
+            let can_skip = true;
+            if can_skip {
+                return;
+            }
         }
 
         // Cull elements whose transformed geometry is not representable in f32 (e.g.
@@ -695,7 +719,7 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
                         border_box,
                         &effects.filter.0,
                         &effects.backdrop_filter.0,
-                        css_blur,
+                        css_blur.map(|blur| blur.with_ink(self.source_ink(node))),
                     )
                 } else {
                     (filter, backdrop_filter)
@@ -787,7 +811,19 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
                                 cx.draw_text_input_text(scene, content_position);
                                 cx.draw_inline_layout(scene, content_position);
                                 cx.draw_marker(scene, content_position);
-                                cx.draw_children(scene, cx.transform, child_clip_rect);
+                                cx.for_each_paint_child(cx.transform, |child, parent| {
+                                    cx.render_node(
+                                        scene,
+                                        child,
+                                        parent,
+                                        CullClip {
+                                            bounds: child_clip_rect,
+                                            #[cfg(feature = "ahcut")]
+                                            in_blur_source: cull.in_blur_source
+                                                || css_blur.is_some(),
+                                        },
+                                    );
+                                });
                             },
                         );
 
@@ -818,7 +854,7 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
         scene: &mut impl PaintScene,
         node_id: NodeId,
         parent_style_transform: Affine,
-        clip_rect: Rect,
+        clip_rect: CullClip,
     ) {
         let node = &self.dom.as_ref().tree()[node_id];
 
@@ -950,6 +986,13 @@ struct ElementCx<'dom, 'a> {
     devtools: &'dom DevtoolSettings,
     #[cfg_attr(not(feature = "custom-widget"), expect(unused))]
     custom_widget_scene: Option<&'a Scene>,
+}
+
+#[derive(Clone, Copy)]
+struct CullClip {
+    bounds: Rect,
+    #[cfg(feature = "ahcut")]
+    in_blur_source: bool,
 }
 
 /// Converts parley BoundingBox into peniko Rect
@@ -1280,11 +1323,10 @@ impl ElementCx<'_, '_> {
         }
     }
 
-    fn draw_children(
+    fn for_each_paint_child(
         &self,
-        scene: &mut impl PaintScene,
         parent_style_transform: Affine,
-        clip_rect: Rect,
+        mut visit: impl FnMut(NodeId, Affine),
     ) {
         // Negative z_index hoisted nodes
 
@@ -1295,11 +1337,9 @@ impl ElementCx<'_, '_> {
                     x: position.x as f64 * self.scale,
                     y: position.y as f64 * self.scale,
                 };
-                self.render_node(
-                    scene,
+                visit(
                     hoisted_child.node_id,
                     parent_style_transform.pre_translate(pos),
-                    clip_rect,
                 );
             }
         }
@@ -1328,7 +1368,7 @@ impl ElementCx<'_, '_> {
                 } else {
                     parent_style_transform
                 };
-                self.render_node(scene, *child_id, child_transform, clip_rect);
+                visit(*child_id, child_transform);
             }
         }
 
@@ -1340,11 +1380,9 @@ impl ElementCx<'_, '_> {
                     x: position.x as f64 * self.scale,
                     y: position.y as f64 * self.scale,
                 };
-                self.render_node(
-                    scene,
+                visit(
                     hoisted_child.node_id,
                     parent_style_transform.pre_translate(pos),
-                    clip_rect,
                 );
             }
         }

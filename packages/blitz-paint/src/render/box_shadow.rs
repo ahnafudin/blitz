@@ -77,14 +77,7 @@ impl ElementCx<'_, '_> {
         }
         let shadow_color: Color = shadow_color;
 
-        let offset = Vec2::new(
-            shadow.base.horizontal.px() as f64,
-            shadow.base.vertical.px() as f64,
-        ) * self.scale;
-        let spread = shadow.spread.px() as f64 * self.scale;
-        // The standard deviation of a CSS shadow's blur is half of its blur radius
-        let std_dev = shadow.base.blur.px() as f64 * self.scale / 2.0;
-
+        let (offset, spread, std_dev) = self.shadow_dimensions(shadow);
         scene.draw_box_shadow(
             self.transform,
             box_shape,
@@ -94,5 +87,17 @@ impl ElementCx<'_, '_> {
             shadow_color,
             kind,
         );
+    }
+
+    pub(super) fn shadow_dimensions(&self, shadow: &BoxShadow) -> (Vec2, f64, f64) {
+        let offset = Vec2::new(
+            shadow.base.horizontal.px() as f64,
+            shadow.base.vertical.px() as f64,
+        ) * self.scale;
+        let spread = shadow.spread.px() as f64 * self.scale;
+        // The standard deviation of a CSS shadow's blur is half of its blur radius
+        let std_dev = shadow.base.blur.px() as f64 * self.scale / 2.0;
+
+        (offset, spread, std_dev)
     }
 }
