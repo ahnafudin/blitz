@@ -58,10 +58,16 @@ impl std::ops::DerefMut for FontLoadingState {
 pub type FontFaceLoads = Arc<Mutex<FontLoadingState>>;
 pub struct FontStylesheetState {
     inner: FontFaceLoads,
+    #[cfg(feature = "ahcut")]
+    pub(crate) author_styles: crate::style_admission::StyleAdmission,
 }
 impl FontStylesheetState {
     pub(crate) fn new(inner: FontFaceLoads) -> Self {
-        Self { inner }
+        Self {
+            inner,
+            #[cfg(feature = "ahcut")]
+            author_styles: Default::default(),
+        }
     }
     pub(crate) fn active(&self) -> bool {
         !self.inner.lock().unwrap().invalid

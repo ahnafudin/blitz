@@ -168,6 +168,12 @@ impl DocumentMutator<'_> {
 
     pub fn create_element(&mut self, name: QualName, attrs: Vec<Attribute>) -> NodeId {
         let mut data = ElementData::new(name, attrs);
+        #[cfg(feature = "ahcut")]
+        if let Some(inline) = data.attr(local_name!("style")) {
+            let _ = self
+                .doc
+                .admit_script_style(crate::StyleInput::Declarations, inline);
+        }
         data.flush_style_attribute(self.doc.guard(), &self.doc.url.url_extra_data());
 
         let id = self.doc.create_node(NodeData::Element(Box::new(data)));
@@ -321,6 +327,16 @@ impl DocumentMutator<'_> {
     }
 
     pub fn set_attribute(&mut self, node_id: NodeId, name: QualName, value: &str) {
+        #[cfg(feature = "ahcut")]
+        if name.local == local_name!("style")
+            && name.ns == ns!()
+            && self
+                .doc
+                .admit_script_style(crate::StyleInput::Declarations, value)
+                .is_err()
+        {
+            return;
+        }
         let node_is_in_document = self.doc.nodes[node_id].flags.is_in_document();
         if node_is_in_document {
             self.doc.snapshot_node(node_id, &name.local);

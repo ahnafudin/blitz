@@ -117,6 +117,11 @@ pub(crate) fn set_css_text(
     let ctx = dom_ctx(context)?;
     let node_id = this_node_id(this)?;
     let css = to_rust_string(args.first().unwrap_or(&JsValue::undefined()), context)?;
+    #[cfg(feature = "ahcut")]
+    ctx.doc
+        .borrow()
+        .admit_script_style(blitz_dom::StyleInput::Declarations, &css)
+        .map_err(|message| boa_engine::JsNativeError::typ().with_message(message))?;
     // Parse and re-serialize so that the stored attribute is canonical and
     // invalid declarations are dropped
     let css = ctx.doc.borrow().style_attr_serialize(&css);
@@ -138,6 +143,13 @@ fn set_property(this: &JsValue, args: &[JsValue], context: &mut Context) -> JsRe
         _ => String::new(),
     };
     let important = priority.eq_ignore_ascii_case("important");
+    #[cfg(feature = "ahcut")]
+    if !value.is_empty() {
+        ctx.doc
+            .borrow()
+            .admit_script_style(blitz_dom::StyleInput::Property, &name)
+            .map_err(|message| boa_engine::JsNativeError::typ().with_message(message))?;
+    }
 
     let style_attr = read_style_attr(&ctx, node_id);
     let new_style_attr =

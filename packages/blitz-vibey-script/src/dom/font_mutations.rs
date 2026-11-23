@@ -32,6 +32,13 @@ pub(super) fn guarded(name: &str, setter: bool, body: NativeFnPtr) -> NativeFunc
 }
 /// A CSSOM native: the ones that change a sheet are refused while the style sheets are frozen.
 pub(super) fn guarded_cssom(name: &str, body: NativeFnPtr) -> NativeFunction {
+    use blitz_dom::StyleInput;
+    let style_input = match name {
+        "__blitz_sheet_insert_rule" => Some(StyleInput::Sheet),
+        "__blitz_sheet_style_set_css_text" => Some(StyleInput::Declarations),
+        "__blitz_sheet_style_set" => Some(StyleInput::Property),
+        _ => None,
+    };
     let mutates = matches!(
         name,
         "__blitz_sheet_set_disabled"
@@ -44,6 +51,21 @@ pub(super) fn guarded_cssom(name: &str, body: NativeFnPtr) -> NativeFunction {
     );
     NativeFunction::from_copy_closure(move |this, args, context| {
         if mutates && dom_ctx(context)?.doc.borrow().font_stylesheets_frozen() {
+            if let (Some(input), Some(text)) = (style_input, args.get(2)) {
+                let text = text.to_string(context)?.to_std_string_lossy();
+                let removal = matches!(input, StyleInput::Property)
+                    && args
+                        .get(3)
+                        .and_then(JsValue::as_string)
+                        .is_some_and(|s| s.is_empty());
+                if !removal {
+                    dom_ctx(context)?
+                        .doc
+                        .borrow()
+                        .admit_script_style(input, &text)
+                        .map_err(|message| JsNativeError::typ().with_message(message))?;
+                }
+            }
             return Err(refusal());
         }
         valid(context)?;

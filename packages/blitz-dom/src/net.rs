@@ -218,6 +218,8 @@ impl ResourceHandler<StylesheetHandler> {
         if !self.data.font_stylesheets.active() {
             return;
         }
+        #[cfg(feature = "ahcut")]
+        self.data.font_stylesheets.author_styles.check_bytes(&bytes);
         let sheet = Stylesheet::from_bytes(
             &bytes,
             self.data.source_url.clone().into(),
@@ -357,6 +359,12 @@ impl ResourceHandler<NestedStylesheetHandler> {
         if !self.data.loader.font_stylesheets.active() {
             return;
         }
+        #[cfg(feature = "ahcut")]
+        self.data
+            .loader
+            .font_stylesheets
+            .author_styles
+            .check_bytes(&bytes);
         let sheet = ServoArc::new(Stylesheet::from_bytes(
             &bytes,
             UrlExtraData(self.data.url.clone()),

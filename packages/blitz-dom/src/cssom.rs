@@ -455,6 +455,9 @@ impl BaseDocument {
         rule: &str,
         index: usize,
     ) -> Result<usize, CssomError> {
+        #[cfg(feature = "ahcut")]
+        self.admit_script_style(crate::StyleInput::Sheet, rule)
+            .map_err(|_| CssomError::NotSupported)?;
         if self.refuse_frozen_font_stylesheet_mutation() {
             return Err(CssomError::NotSupported);
         }
@@ -741,6 +744,11 @@ impl BaseDocument {
         value: &str,
         important: bool,
     ) -> Result<(), CssomError> {
+        #[cfg(feature = "ahcut")]
+        if !value.is_empty() {
+            self.admit_script_style(crate::StyleInput::Property, property)
+                .map_err(|_| CssomError::NotSupported)?;
+        }
         if self.refuse_frozen_font_stylesheet_mutation() {
             return Err(CssomError::NotSupported);
         }
@@ -972,6 +980,9 @@ impl BaseDocument {
         path: &[usize],
         css: &str,
     ) -> Result<(), CssomError> {
+        #[cfg(feature = "ahcut")]
+        self.admit_script_style(crate::StyleInput::Declarations, css)
+            .map_err(|_| CssomError::NotSupported)?;
         if self.refuse_frozen_font_stylesheet_mutation() {
             return Err(CssomError::NotSupported);
         }

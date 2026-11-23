@@ -944,6 +944,7 @@ dependencies = [
  "cssparser",
  "cursor-icon",
  "debug_timer 0.1.3",
+ "encoding_rs",
  "euclid",
  "html-escape",
  "icu_casemap",

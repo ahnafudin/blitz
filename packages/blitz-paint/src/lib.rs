@@ -98,6 +98,9 @@ pub fn try_paint_scene(
     y_offset: u32,
 ) -> Result<(), anyrender::filters::FilterError> {
     use anyrender::filters::FilterError;
+    if let Some(message) = doc.script_style_refusal() {
+        return Err(FilterError::Unsupported(message));
+    }
     if !scale.is_finite() || scale <= 0.0 || width == 0 || height == 0 {
         return Err(FilterError::Invalid("paint viewport or scale"));
     }

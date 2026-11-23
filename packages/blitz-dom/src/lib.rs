@@ -40,6 +40,10 @@ mod document;
 pub mod node;
 
 mod config;
+#[cfg(feature = "ahcut")]
+mod style_admission;
+#[cfg(feature = "ahcut")]
+pub use style_admission::StyleInput;
 /// CSSOM stylesheet access (`document.styleSheets`, `CSSStyleSheet`, `CSSRule`)
 mod cssom;
 mod debug;

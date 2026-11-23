@@ -27,7 +27,7 @@ svg = ["dep:usvg", "dep:svgtypes", "dep:png"]
 # provenance, SVG text and non-`data:` SVG image sources detected and not loaded, CSSOM colour-space carry;
 # for `document.fonts` readiness, style sheets from the network parsed on the document thread, pending style
 # sheets counted, and a font response for a removed style sheet dropped.
-ahcut = ["svg", "dep:anyrender", "anyrender/ahcut", "style/ahcut", "blitz-traits/ahcut"]
+ahcut = ["svg", "dep:anyrender", "anyrender/ahcut", "style/ahcut", "blitz-traits/ahcut", "dep:encoding_rs"]
 # WOFF decoding (using the "wuff" crate which is pure Rust)
 woff = ["dep:wuff"]
 accessibility = ["accesskit"]
@@ -60,6 +60,7 @@ debug_timer = { workspace = true }
 style = { workspace = true }
 selectors = { workspace = true }
 cssparser = { workspace = true }
+encoding_rs = { version = "0.8", optional = true }
 style_config = { workspace = true }
 style_traits = { workspace = true }
 style_dom = { workspace = true }

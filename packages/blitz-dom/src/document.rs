@@ -847,6 +847,14 @@ impl BaseDocument {
     }
 
     pub fn set_style_property(&mut self, node_id: NodeId, name: &str, value: &str) {
+        #[cfg(feature = "ahcut")]
+        if !value.is_empty()
+            && self
+                .admit_script_style(crate::StyleInput::Property, name)
+                .is_err()
+        {
+            return;
+        }
         let node = &mut self.nodes[node_id];
         let did_change = node.element_data_mut().unwrap().set_style_property(
             name,
@@ -1315,6 +1323,10 @@ impl BaseDocument {
         origin: Origin,
         owner: Option<NodeId>,
     ) -> DocumentStyleSheet {
+        #[cfg(feature = "ahcut")]
+        if origin == Origin::Author {
+            let _ = self.admit_script_style(crate::StyleInput::Sheet, css.as_ref());
+        }
         let data = Stylesheet::from_str(
             css.as_ref(),
             self.url.url_extra_data(),
