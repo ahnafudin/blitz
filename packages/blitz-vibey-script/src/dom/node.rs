@@ -464,6 +464,9 @@ fn arg_node_ids(
     let mut node_ids = Vec::with_capacity(args.len());
     for arg in args {
         match node_id_of_value(arg) {
+            #[cfg(feature = "ahcut")]
+            Some(node_id) => node_ids.push(node_id),
+            #[cfg(not(feature = "ahcut"))]
             Some(node_id) => node_ids.extend(insertable_node_ids(ctx, node_id)),
             None => {
                 let text = to_rust_string(arg, context)?;
@@ -474,6 +477,7 @@ fn arg_node_ids(
     #[cfg(feature = "ahcut")]
     {
         let doc = ctx.doc.borrow();
+        node_ids = super::script_insertion::argument_roots(&doc, node_ids);
         // before/after/replaceWith do nothing if their receiver has no parent.
         if _sibling_anchor
             .is_none_or(|id| doc.get_node(id).is_some_and(|node| node.parent.is_some()))
