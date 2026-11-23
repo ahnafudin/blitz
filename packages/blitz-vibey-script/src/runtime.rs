@@ -176,6 +176,15 @@ impl ScriptRuntime {
         }
     }
 
+    #[cfg(feature = "ahcut")]
+    pub(crate) fn install_host_sdk(&mut self, source: &str) {
+        const DESCRIPTION: &str = "<host SDK>";
+        if let Err(error) = crate::refusal::install_sdk(source, &mut self.context) {
+            report_js_error(&self.ctx, &mut self.context, DESCRIPTION, &error);
+        }
+        self.run_jobs(DESCRIPTION);
+    }
+
     /// Run pending promise jobs (microtasks)
     pub fn run_jobs(&mut self, description: &str) {
         #[cfg(feature = "ahcut")]

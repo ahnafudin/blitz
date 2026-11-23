@@ -59,7 +59,10 @@ fn the_host_sdk_issues_refusals_by_identity_before_the_first_page_script() {
     doc.eval("saved.message = 'changed'; throw saved");
     let entries = doc.take_uncaught_errors();
     assert_eq!(
-        entries.iter().map(|e| e.refusal.as_deref()).collect::<Vec<_>>(),
+        entries
+            .iter()
+            .map(|e| e.refusal.as_deref())
+            .collect::<Vec<_>>(),
         [None, None, Some("INPUT_REFUSED:use a number")]
     );
 }

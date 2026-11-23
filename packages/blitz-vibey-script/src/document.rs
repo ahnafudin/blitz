@@ -333,6 +333,14 @@ impl ScriptDocument {
         }
     }
 
+    /// Evaluate a trusted installer function and call it with a private `makeRefusal(message)`.
+    /// Install before evaluating page code. Keep the factory inside the SDK closure. Uncaught
+    /// errors it creates carry their original message in [`Self::take_uncaught_errors`].
+    #[cfg(feature = "ahcut")]
+    pub fn install_host_sdk(&mut self, source: &str) {
+        self.runtime.install_host_sdk(source);
+    }
+
     /// Evaluate arbitrary JavaScript code in the document's script context
     pub fn eval(&mut self, code: &str) {
         self.runtime.sync_named_element_globals();
