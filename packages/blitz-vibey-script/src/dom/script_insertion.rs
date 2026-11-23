@@ -51,7 +51,7 @@ pub(super) fn check(doc: &BaseDocument, roots: &[NodeId]) -> JsResult<()> {
             continue;
         };
         if node.element_data().is_some_and(|el| {
-            el.name.local.as_ref() == "script"
+            el.name.local == blitz_dom::local_name!("script")
                 && (el.name.ns == ns!(html) || el.name.ns == ns!(svg))
         }) {
             return Err(JsNativeError::typ().with_message(REFUSAL).into());

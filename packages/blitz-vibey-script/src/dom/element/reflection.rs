@@ -154,7 +154,7 @@ impl Reflection {
         let attr = el
             .attrs()
             .iter()
-            .find(|attr| attr.name.ns == ns!() && attr.name.local.as_ref() == self.attribute)
+            .find(|attr| attr.name.ns == ns!() && &*attr.name.local == self.attribute)
             .map(|attr| attr.value.as_str());
         let raw = attr.unwrap_or_default();
         Ok(match self.kind {
@@ -166,7 +166,9 @@ impl Reflection {
                     .find(|dir| raw.eq_ignore_ascii_case(dir))
                     .unwrap_or(""),
             ),
-            Kind::Url if attr.is_none() && el.name.local.as_ref() != "base" => js_str(""),
+            Kind::Url if attr.is_none() && el.name.local != blitz_dom::local_name!("base") => {
+                js_str("")
+            }
             Kind::Url => {
                 let state = ctx.state.borrow();
                 let url = Url::options()
