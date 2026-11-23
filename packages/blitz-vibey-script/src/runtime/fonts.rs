@@ -23,10 +23,13 @@ pub(super) fn snapshot(_: &JsValue, args: &[JsValue], context: &mut Context) -> 
         doc.resolve(0.0);
         doc.font_loading_snapshot(requested.as_deref(), &waiting)
             .map_err(|message| {
-                if message.starts_with("STYLESHEET_REBUILD_REQUIRED") {
-                    JsNativeError::typ().with_message(message)
+                if message == blitz_dom::BaseDocument::INVALIDATED_FONT_GRAPH {
+                    crate::refusal::type_error(
+                        blitz_dom::BaseDocument::INVALIDATED_FONT_GRAPH,
+                        context,
+                    )
                 } else {
-                    JsNativeError::syntax().with_message(message)
+                    JsNativeError::syntax().with_message(message).into()
                 }
             })?
     };

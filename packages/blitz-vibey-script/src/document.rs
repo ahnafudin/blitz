@@ -318,6 +318,15 @@ impl ScriptDocument {
     /// [`tracing::error!`].
     pub fn take_js_errors(&mut self) -> Vec<String> {
         std::mem::take(&mut self.runtime.ctx.state.borrow_mut().uncaught_errors)
+            .into_iter()
+            .map(|error| error.message)
+            .collect()
+    }
+
+    /// Drain the same ordered, bounded queue as [`Self::take_js_errors`], retaining native refusal details.
+    #[cfg(feature = "ahcut")]
+    pub fn take_uncaught_errors(&mut self) -> Vec<crate::UncaughtScriptError> {
+        std::mem::take(&mut self.runtime.ctx.state.borrow_mut().uncaught_errors)
     }
 
     /// Record an error for collection via [`take_js_errors`](Self::take_js_errors)

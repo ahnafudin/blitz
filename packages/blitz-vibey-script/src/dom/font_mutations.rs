@@ -1,18 +1,15 @@
 //! With `ahcut`: refuse style sheet changes once the script document's style sheets are frozen.
 use super::{NativeFnPtr, dom_ctx, node_id_of_value};
 use blitz_dom::{BaseDocument, NodeId};
-use boa_engine::{Context, JsNativeError, JsResult, JsValue, NativeFunction};
+use boa_engine::{Context, JsResult, JsValue, NativeFunction};
 
 const REBUILD: &str =
-    "STYLESHEET_REBUILD_REQUIRED: recreate ScriptDocument to change stylesheet definitions";
+    "STYLESHEET_REBUILD_REQUIRED:recreate ScriptDocument to change stylesheet definitions";
 const LINK_WRITE: &str =
-    "STYLESHEET_REBUILD_REQUIRED: set link attributes in the HTML, not from script";
-fn refusal() -> boa_engine::JsError {
-    JsNativeError::typ().with_message(REBUILD).into()
-}
+    "STYLESHEET_REBUILD_REQUIRED:set link attributes in the HTML, not from script";
 pub(super) fn valid(context: &mut Context) -> JsResult<()> {
     if !dom_ctx(context)?.doc.borrow().font_stylesheets_valid() {
-        return Err(refusal());
+        return Err(crate::refusal::type_error(REBUILD, context));
     }
     Ok(())
 }
@@ -65,10 +62,10 @@ pub(super) fn guarded_cssom(name: &str, body: NativeFnPtr) -> NativeFunction {
                         .doc
                         .borrow()
                         .admit_script_style(input, &text)
-                        .map_err(|message| JsNativeError::typ().with_message(message))?;
+                        .map_err(|message| crate::refusal::type_error(message, context))?;
                 }
             }
-            return Err(refusal());
+            return Err(crate::refusal::type_error(REBUILD, context));
         }
         valid(context)?;
         body(this, args, context)
@@ -149,7 +146,7 @@ fn preflight(
             .to_string(context)?;
         let lower = text.to_std_string_lossy().to_ascii_lowercase();
         if lower.contains("<style") || lower.contains("<link") {
-            return Err(refusal());
+            return Err(crate::refusal::type_error(REBUILD, context));
         }
         if owned.len() <= index {
             owned.resize(index + 1, JsValue::undefined());
@@ -165,7 +162,7 @@ fn preflight(
     if kind == 1
         && let Some(id) = target
     {
-        connected_link_write(&doc, id)?;
+        connected_link_write(&doc, id, context)?;
     }
     // A move is refused when the subtree that moves holds a style sheet, or when it would land inside one:
     // that is what could change the set, the order or the text of style sheets. A subtree without a style
@@ -186,15 +183,19 @@ fn preflight(
         .filter_map(|id| doc.get_node(id).and_then(|node| node.parent))
         .any(|parent| css_ancestor(&doc, parent));
     if touches || lands_in_sheet {
-        return Err(refusal());
+        return Err(crate::refusal::type_error(REBUILD, context));
     }
     Ok(owned)
 }
 
 /// A detached element has no active style sheet. Check after Web IDL conversion, since the
 /// script supplying the value can itself mutate the tree during conversion.
-pub(super) fn reflected_write(doc: &BaseDocument, id: NodeId) -> JsResult<()> {
-    connected_link_write(doc, id)?;
+pub(super) fn reflected_write(
+    doc: &BaseDocument,
+    id: NodeId,
+    context: &mut Context,
+) -> JsResult<()> {
+    connected_link_write(doc, id, context)?;
     if !doc.font_stylesheets_valid()
         || (doc.font_stylesheets_frozen()
             && doc
@@ -202,14 +203,18 @@ pub(super) fn reflected_write(doc: &BaseDocument, id: NodeId) -> JsResult<()> {
                 .is_some_and(|node| node.flags.is_in_document())
             && css_ancestor(doc, id))
     {
-        return Err(refusal());
+        return Err(crate::refusal::type_error(REBUILD, context));
     }
     Ok(())
 }
 
 /// Link relations are frozen at load, including links for icons and preloads.
 /// Every new native writer of a connected link's attributes must also pass this check.
-pub(super) fn connected_link_write(doc: &BaseDocument, id: NodeId) -> JsResult<()> {
+pub(super) fn connected_link_write(
+    doc: &BaseDocument,
+    id: NodeId,
+    context: &mut Context,
+) -> JsResult<()> {
     if doc.font_stylesheets_frozen()
         && doc.get_node(id).is_some_and(|node| {
             node.flags.is_in_document()
@@ -219,7 +224,7 @@ pub(super) fn connected_link_write(doc: &BaseDocument, id: NodeId) -> JsResult<(
                 })
         })
     {
-        return Err(JsNativeError::typ().with_message(LINK_WRITE).into());
+        return Err(crate::refusal::type_error(LINK_WRITE, context));
     }
     Ok(())
 }

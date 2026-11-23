@@ -187,7 +187,7 @@ impl Reflection {
     fn set(&self, this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
         let ctx = dom_ctx(context)?;
         let id = self.receiver(this, &ctx)?;
-        font_mutations::reflected_write(&ctx.doc.borrow(), id)?;
+        font_mutations::reflected_write(&ctx.doc.borrow(), id, context)?;
         let value = args.first().cloned().unwrap_or_default();
         let attr = match self.kind {
             Kind::String | Kind::Direction | Kind::Url => Some(to_rust_string(&value, context)?),
@@ -198,7 +198,7 @@ impl Reflection {
                 Some(if value > i32::MAX as u32 { 1 } else { value }.to_string())
             }
         };
-        font_mutations::reflected_write(&ctx.doc.borrow(), id)?;
+        font_mutations::reflected_write(&ctx.doc.borrow(), id, context)?;
         match attr {
             Some(attr) => write_attr(&ctx, id, self.attribute, &attr),
             None => clear_attr(&ctx, id, self.attribute),

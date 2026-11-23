@@ -95,10 +95,11 @@ fn read_style_attr(ctx: &crate::state::DomCtx, node_id: NodeId) -> String {
         .to_string()
 }
 
-fn write_style_attr(ctx: &crate::state::DomCtx, node_id: NodeId, style_attr: &str) -> JsResult<()> {
+fn write_style_attr(context: &mut Context, node_id: NodeId, style_attr: &str) -> JsResult<()> {
+    let ctx = dom_ctx(context)?;
     let mut doc = ctx.doc.borrow_mut();
     #[cfg(feature = "ahcut")]
-    super::font_mutations::connected_link_write(&doc, node_id)?;
+    super::font_mutations::connected_link_write(&doc, node_id, context)?;
     doc.mutate()
         .set_attribute(node_id, attr_name("style"), style_attr);
     Ok(())
@@ -124,11 +125,11 @@ pub(crate) fn set_css_text(
     ctx.doc
         .borrow()
         .admit_script_style(blitz_dom::StyleInput::Declarations, &css)
-        .map_err(|message| boa_engine::JsNativeError::typ().with_message(message))?;
+        .map_err(|message| crate::refusal::type_error(message, context))?;
     // Parse and re-serialize so that the stored attribute is canonical and
     // invalid declarations are dropped
     let css = ctx.doc.borrow().style_attr_serialize(&css);
-    write_style_attr(&ctx, node_id, &css)?;
+    write_style_attr(context, node_id, &css)?;
     Ok(JsValue::undefined())
 }
 
@@ -151,7 +152,7 @@ fn set_property(this: &JsValue, args: &[JsValue], context: &mut Context) -> JsRe
         ctx.doc
             .borrow()
             .admit_script_style(blitz_dom::StyleInput::Property, &name)
-            .map_err(|message| boa_engine::JsNativeError::typ().with_message(message))?;
+            .map_err(|message| crate::refusal::type_error(message, context))?;
     }
 
     let style_attr = read_style_attr(&ctx, node_id);
@@ -161,7 +162,7 @@ fn set_property(this: &JsValue, args: &[JsValue], context: &mut Context) -> JsRe
             .style_attr_set_property(&style_attr, &name, &value, important);
     // `None` means the declaration was invalid: ignore it (per CSSOM)
     if let Some(new_style_attr) = new_style_attr {
-        write_style_attr(&ctx, node_id, &new_style_attr)?;
+        write_style_attr(context, node_id, &new_style_attr)?;
     }
     Ok(JsValue::undefined())
 }
@@ -179,7 +180,7 @@ fn remove_property(this: &JsValue, args: &[JsValue], context: &mut Context) -> J
     let Some((new_style_attr, removed_value)) = removed else {
         return Ok(js_str(""));
     };
-    write_style_attr(&ctx, node_id, &new_style_attr)?;
+    write_style_attr(context, node_id, &new_style_attr)?;
     Ok(js_str(&removed_value))
 }
 

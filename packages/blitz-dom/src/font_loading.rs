@@ -112,6 +112,10 @@ pub struct FontLoadingSnapshot {
     pub revision: u64,
 }
 impl BaseDocument {
+    /// The diagnostic returned by the font snapshot after a frozen graph is invalidated.
+    pub const INVALIDATED_FONT_GRAPH: &'static str =
+        "STYLESHEET_REBUILD_REQUIRED:invalidated font graph";
+
     pub fn freeze_font_stylesheets(&self) {
         let mut state = self.font_loads.lock().unwrap();
         state.frozen = true;
@@ -145,7 +149,7 @@ impl BaseDocument {
         let (faces, pending, revision) = {
             let state = self.font_loads.lock().unwrap();
             if state.invalid {
-                return Err("STYLESHEET_REBUILD_REQUIRED: invalidated font graph".into());
+                return Err(Self::INVALIDATED_FONT_GRAPH.into());
             }
             (
                 state.faces.values().cloned().collect::<Vec<_>>(),

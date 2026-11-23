@@ -58,6 +58,26 @@ pub(crate) struct Listener {
 
 pub(crate) type ListenerMap = HashMap<String, Vec<Listener>>;
 
+/// One uncaught exception or script-loading error, in reporting order.
+#[derive(Debug)]
+pub struct UncaughtScriptError {
+    /// The same decorated diagnostic returned by `ScriptDocument::take_js_errors`.
+    pub message: String,
+    /// The native DOM refusal and its remedy, when the original error object escaped the page.
+    #[cfg(feature = "ahcut")]
+    pub refusal: Option<String>,
+}
+
+impl From<String> for UncaughtScriptError {
+    fn from(message: String) -> Self {
+        Self {
+            message,
+            #[cfg(feature = "ahcut")]
+            refusal: None,
+        }
+    }
+}
+
 /// State owned by the script runtime but shared (via `Rc`) with the native
 /// functions exposed to JavaScript.
 ///
@@ -98,7 +118,7 @@ pub(crate) struct RuntimeState {
     /// Uncaught JavaScript errors (from script loading/evaluation, event
     /// listeners, timer callbacks and promise jobs). Drained with
     /// [`ScriptDocument::take_js_errors`](crate::ScriptDocument::take_js_errors).
-    pub uncaught_errors: Vec<String>,
+    pub uncaught_errors: Vec<UncaughtScriptError>,
     /// Set while a window `error` event is being dispatched for an uncaught
     /// exception, so that exceptions thrown by `error` handlers themselves are
     /// only recorded and not re-dispatched
@@ -129,13 +149,13 @@ impl RuntimeState {
     /// [`ScriptDocument::take_js_errors`](crate::ScriptDocument::take_js_errors).
     /// Errors beyond [`MAX_STORED_ERRORS`] are dropped (with a marker) until the
     /// stored errors are drained.
-    pub fn record_error(&mut self, message: String) {
+    pub fn record_error(&mut self, error: impl Into<UncaughtScriptError>) {
         use std::cmp::Ordering;
         match self.uncaught_errors.len().cmp(&MAX_STORED_ERRORS) {
-            Ordering::Less => self.uncaught_errors.push(message),
+            Ordering::Less => self.uncaught_errors.push(error.into()),
             Ordering::Equal => self
                 .uncaught_errors
-                .push("(further errors suppressed)".to_string()),
+                .push("(further errors suppressed)".to_string().into()),
             Ordering::Greater => {}
         }
     }

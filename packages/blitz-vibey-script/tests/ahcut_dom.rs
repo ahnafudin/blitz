@@ -307,7 +307,7 @@ fn every_connected_link_keeps_its_attributes_and_names_the_html_remedy() {
         );
         assert_eq!(
             result,
-            r#"["TypeError: STYLESHEET_REBUILD_REQUIRED: set link attributes in the HTML, not from script",true]"#,
+            r#"["TypeError: STYLESHEET_REBUILD_REQUIRED:set link attributes in the HTML, not from script",true]"#,
             "{write}"
         );
     }

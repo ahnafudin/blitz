@@ -1,7 +1,7 @@
 //! Refuse script elements before a script-driven insertion changes either tree.
 
 use blitz_dom::{BaseDocument, DocumentConfig, NodeId, ns};
-use boa_engine::{JsNativeError, JsResult};
+use boa_engine::{Context, JsResult};
 use std::collections::HashSet;
 
 const REFUSAL: &str = "SCRIPT_INSERT_REFUSED:declare the script in the initial HTML";
@@ -44,7 +44,7 @@ pub(super) fn argument_roots(doc: &BaseDocument, nodes: Vec<NodeId>) -> Vec<Node
     roots
 }
 
-pub(super) fn check(doc: &BaseDocument, roots: &[NodeId]) -> JsResult<()> {
+pub(super) fn check(doc: &BaseDocument, roots: &[NodeId], context: &mut Context) -> JsResult<()> {
     let mut pending = roots.to_vec();
     while let Some(id) = pending.pop() {
         let Some(node) = doc.get_node(id) else {
@@ -54,14 +54,19 @@ pub(super) fn check(doc: &BaseDocument, roots: &[NodeId]) -> JsResult<()> {
             el.name.local == blitz_dom::local_name!("script")
                 && (el.name.ns == ns!(html) || el.name.ns == ns!(svg))
         }) {
-            return Err(JsNativeError::typ().with_message(REFUSAL).into());
+            return Err(crate::refusal::type_error(REFUSAL, context));
         }
         pending.extend_from_slice(&node.children);
     }
     Ok(())
 }
 
-pub(super) fn check_markup(doc: &BaseDocument, id: NodeId, html: &str) -> JsResult<()> {
+pub(super) fn check_markup(
+    doc: &BaseDocument,
+    id: NodeId,
+    html: &str,
+    context: &mut Context,
+) -> JsResult<()> {
     if !html
         .as_bytes()
         .windows(7)
@@ -76,8 +81,12 @@ pub(super) fn check_markup(doc: &BaseDocument, id: NodeId, html: &str) -> JsResu
     // and foreign namespaces. Run it in an isolated document with no external resource providers.
     let mut probe = BaseDocument::new(DocumentConfig::default());
     let mut parser = probe.mutate();
-    let context = parser.create_element(el.name.clone(), el.attrs().to_vec());
-    blitz_html::DocumentHtmlParser::parse_inner_html_into_mutator(&mut parser, context, html);
-    let roots = parser.child_ids(context);
-    check(parser.doc, &roots)
+    let fragment_context = parser.create_element(el.name.clone(), el.attrs().to_vec());
+    blitz_html::DocumentHtmlParser::parse_inner_html_into_mutator(
+        &mut parser,
+        fragment_context,
+        html,
+    );
+    let roots = parser.child_ids(fragment_context);
+    check(parser.doc, &roots, context)
 }

@@ -19,9 +19,12 @@ use crate::state::{DomCtx, Listener};
 pub(super) fn report_js_error(ctx: &DomCtx, context: &mut Context, what: &str, error: &JsError) {
     #[cfg(feature = "tracing")]
     tracing::error!("Uncaught JS error in {what}: {error}");
+    let message = format!("Uncaught JS error in {what}: {error}");
+    #[cfg(feature = "ahcut")]
+    let message = crate::refusal::uncaught(message, error, context);
     let already_dispatching = {
         let mut state = ctx.state.borrow_mut();
-        state.record_error(format!("Uncaught JS error in {what}: {error}"));
+        state.record_error(message);
         std::mem::replace(&mut state.dispatching_error_event, true)
     };
     if already_dispatching {

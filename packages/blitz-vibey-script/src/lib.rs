@@ -35,9 +35,13 @@ mod dom;
 mod event_handler;
 mod fetch;
 mod inner_text;
+#[cfg(feature = "ahcut")]
+mod refusal;
 mod runtime;
 mod state;
 mod timers;
 
 pub use document::ScriptDocument;
 pub use fetch::{DefaultScriptFetcher, FetchError, ScriptFetcher, document_may_load};
+#[cfg(feature = "ahcut")]
+pub use state::UncaughtScriptError;

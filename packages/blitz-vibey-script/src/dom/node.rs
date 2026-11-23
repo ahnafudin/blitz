@@ -296,7 +296,7 @@ fn append_child(this: &JsValue, args: &[JsValue], context: &mut Context) -> JsRe
     // Inserting a DocumentFragment moves its children
     let node_ids = insertable_node_ids(&ctx, child_id);
     #[cfg(feature = "ahcut")]
-    super::script_insertion::check(&ctx.doc.borrow(), &node_ids)?;
+    super::script_insertion::check(&ctx.doc.borrow(), &node_ids, context)?;
 
     let mut doc = ctx.doc.borrow_mut();
     let mut mutr = doc.mutate();
@@ -331,7 +331,7 @@ fn insert_before(this: &JsValue, args: &[JsValue], context: &mut Context) -> JsR
     // Inserting a DocumentFragment moves its children
     let node_ids = insertable_node_ids(&ctx, new_id);
     #[cfg(feature = "ahcut")]
-    super::script_insertion::check(&ctx.doc.borrow(), &node_ids)?;
+    super::script_insertion::check(&ctx.doc.borrow(), &node_ids, context)?;
 
     let mut doc = ctx.doc.borrow_mut();
     let mut mutr = doc.mutate();
@@ -389,7 +389,7 @@ fn replace_child(this: &JsValue, args: &[JsValue], context: &mut Context) -> JsR
         // Inserting a DocumentFragment moves its children
         let node_ids = insertable_node_ids(&ctx, new_id);
         #[cfg(feature = "ahcut")]
-        super::script_insertion::check(&ctx.doc.borrow(), &node_ids)?;
+        super::script_insertion::check(&ctx.doc.borrow(), &node_ids, context)?;
 
         let mut doc = ctx.doc.borrow_mut();
         let mut mutr = doc.mutate();
@@ -482,7 +482,7 @@ fn arg_node_ids(
         if _sibling_anchor
             .is_none_or(|id| doc.get_node(id).is_some_and(|node| node.parent.is_some()))
         {
-            super::script_insertion::check(&doc, &node_ids)?;
+            super::script_insertion::check(&doc, &node_ids, context)?;
         }
     }
     Ok(node_ids)
