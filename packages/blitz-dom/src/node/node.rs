@@ -1827,10 +1827,45 @@ impl Node {
     pub fn offset_parent(&self) -> Option<&Node> {
         let mut node = self;
         loop {
-            node = self.with(node.containing_block()?);
+            #[cfg(not(feature = "ahcut"))]
+            let next = node.containing_block()?;
+            #[cfg(feature = "ahcut")]
+            let Some(next) = node.containing_block() else {
+                // A node that was never laid out has no containing block, and no `offsetParent`.
+                return if std::ptr::eq(node, self) {
+                    None
+                } else {
+                    self.body_of_absolute_box()
+                };
+            };
+            node = self.with(next);
             if node.is_offset_parent() {
                 return Some(node);
             }
+        }
+    }
+
+    /// With `ahcut`: `body` for an absolutely positioned box that no positioned ancestor holds.
+    /// CSSOM View's `offsetParent` is the nearest positioned ancestor or `body`; the walk over
+    /// containing blocks goes from such a box to the root and never meets a static `body`.
+    #[cfg(feature = "ahcut")]
+    fn body_of_absolute_box(&self) -> Option<&Node> {
+        let absolute = self
+            .primary_styles()
+            .is_some_and(|styles| styles.get_box().position == Position::Absolute);
+        let boxed = self
+            .display_style()
+            .is_some_and(|display| !display.is_none());
+        if !(absolute && boxed) {
+            return None;
+        }
+        let mut id = self.parent?;
+        loop {
+            let node = self.with(id);
+            if node.data.is_element_with_tag_name(&local_name!("body")) {
+                return Some(node);
+            }
+            id = node.parent?;
         }
     }
 

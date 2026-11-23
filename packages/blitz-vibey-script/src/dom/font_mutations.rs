@@ -17,8 +17,14 @@ fn valid(context: &mut Context) -> JsResult<()> {
 /// A DOM method or setter that checks the freeze before and the document after it runs.
 pub(super) fn guarded(name: &str, setter: bool, body: NativeFnPtr) -> NativeFunction {
     let guard = kind(name, setter);
+    // `insertBefore(node, reference)` moves its first argument only.
+    let moved = if name == "insertBefore" {
+        1
+    } else {
+        usize::MAX
+    };
     NativeFunction::from_copy_closure(move |this, args, context| {
-        let args = preflight(guard, this, args, context)?;
+        let args = preflight(guard, moved, this, args, context)?;
         let result = body(this, &args, context)?;
         valid(context)?;
         Ok(result)
@@ -44,22 +50,23 @@ pub(super) fn guarded_cssom(name: &str, body: NativeFnPtr) -> NativeFunction {
         body(this, args, context)
     })
 }
+/// What a guarded call can reach. 0: nothing. 1: an attribute or a property of the node. 2: only the nodes it
+/// is given, which it moves. 3: the node itself or its children, which it removes. 4: the same, by parsed
+/// markup. 5: `insertAdjacentHTML`, held to the check of 4.
 fn kind(name: &str, setter: bool) -> u8 {
     match name {
-        "innerHTML" | "outerHTML" if setter => 3,
-        "insertAdjacentHTML" => 4,
-        "textContent" | "nodeValue" | "data" | "innerText" | "outerText" if setter => 2,
+        "innerHTML" | "outerHTML" if setter => 4,
+        "insertAdjacentHTML" => 5,
+        "textContent" | "nodeValue" | "data" | "innerText" | "outerText" if setter => 3,
+        "remove" | "replaceWith" | "replaceChildren" => 3,
         "appendChild"
         | "insertBefore"
         | "removeChild"
         | "replaceChild"
-        | "remove"
         | "before"
         | "after"
-        | "replaceWith"
         | "append"
         | "prepend"
-        | "replaceChildren"
         | "insertAdjacentElement"
         | "insertAdjacentText" => 2,
         "setAttribute" | "setAttributeNS" | "removeAttribute" | "removeAttributeNS"
@@ -98,6 +105,7 @@ fn css_subtree(doc: &BaseDocument, id: NodeId) -> bool {
 }
 fn preflight(
     kind: u8,
+    moved: usize,
     this: &JsValue,
     args: &[JsValue],
     context: &mut Context,
@@ -108,8 +116,8 @@ fn preflight(
         return Ok(owned);
     }
     // Convert markup once so a stateful JS toString cannot evade the preflight.
-    if kind >= 3 {
-        let index = usize::from(kind == 4);
+    if kind >= 4 {
+        let index = usize::from(kind == 5);
         let text = owned
             .get(index)
             .cloned()
@@ -130,14 +138,25 @@ fn preflight(
         return Ok(owned);
     }
     let target = node_id_of_value(this);
+    // A move is refused when the subtree that moves holds a style sheet, or when it would land inside one:
+    // that is what could change the set, the order or the text of style sheets. A subtree without a style
+    // sheet may land anywhere else.
     let touches = target
-        .is_some_and(|id| css_ancestor(&doc, id) || (kind >= 2 && css_subtree(&doc, id)))
+        .is_some_and(|id| css_ancestor(&doc, id) || (kind >= 3 && css_subtree(&doc, id)))
         || (kind >= 2
             && owned
                 .iter()
+                .take(moved)
                 .filter_map(node_id_of_value)
                 .any(|id| css_ancestor(&doc, id) || css_subtree(&doc, id)));
-    if touches {
+    // `insertBefore` lands its node in the parent of the reference, whatever node it is called on.
+    let lands_in_sheet = owned
+        .iter()
+        .skip(moved)
+        .filter_map(node_id_of_value)
+        .filter_map(|id| doc.get_node(id).and_then(|node| node.parent))
+        .any(|parent| css_ancestor(&doc, parent));
+    if touches || lands_in_sheet {
         return Err(refusal());
     }
     Ok(owned)
