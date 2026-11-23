@@ -62,6 +62,29 @@ impl CssBlur {
 }
 
 impl BlitzDomPainter<'_, '_> {
+    pub(super) fn subtree_has_blur(&self, node: &Node) -> bool {
+        if let Some(cached) = self.contains_blur.borrow().get(&node.id) {
+            return *cached;
+        }
+        let own = node.element_data().is_some()
+            && node.primary_styles().is_some_and(|styles| {
+                matches!(&styles.get_effects().filter.0[..], [StyloFilter::Blur(_)])
+            });
+        let children = node.paint_children.borrow();
+        let hoisted = node
+            .stacking_context
+            .iter()
+            .flat_map(|context| context.children.iter().map(|child| child.node_id));
+        let has_blur = own
+            || children.iter().flatten().copied().chain(hoisted).any(|id| {
+                self.dom
+                    .get_node(id)
+                    .is_some_and(|child| self.subtree_has_blur(child))
+            });
+        self.contains_blur.borrow_mut().insert(node.id, has_blur);
+        has_blur
+    }
+
     /// Source ink in the node's local device pixels, before its own filter.
     /// Unknown extents keep the viewport crop and cannot justify culling a blur source.
     pub(super) fn source_ink(&self, node: &Node) -> Option<Rect> {

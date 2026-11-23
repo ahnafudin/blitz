@@ -141,6 +141,9 @@ pub struct BlitzDomPainter<'dom, 'a> {
     /// Local ink bounds used for CSS filter crops, shared across both checked paint walks.
     #[cfg(feature = "ahcut")]
     ink_bounds: RefCell<HashMap<NodeId, Option<Rect>>>,
+    /// Only offscreen subtrees are queried. A descendant's blur can reach the viewport.
+    #[cfg(feature = "ahcut")]
+    contains_blur: RefCell<HashMap<NodeId, bool>>,
     /// Reusable scratch allocations shared by all text layouts painted for this document.
     pub(crate) draw_text_context: RefCell<DrawTextContext>,
     /// Cached selection ranges for O(1) lookup: node_id -> (start_offset, end_offset)
@@ -207,6 +210,8 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
             checked_filters: false,
             #[cfg(feature = "ahcut")]
             ink_bounds: RefCell::default(),
+            #[cfg(feature = "ahcut")]
+            contains_blur: RefCell::default(),
             draw_text_context: RefCell::new(DrawTextContext::default()),
             selection_ranges,
             custom_widget_scenes,
@@ -580,10 +585,12 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
             // A source outside the expanded clip may still cast a shadow or draw
             // an overhanging glyph into the blur. Cull only when its ink also misses.
             #[cfg(feature = "ahcut")]
-            let can_skip = !cull.in_blur_source
-                || self
-                    .source_ink(node)
-                    .is_some_and(|ink| outside_clip(screen_transform.transform_rect_bbox(ink)));
+            let can_skip = !self.checked_filters
+                || (!self.subtree_has_blur(node)
+                    && (!cull.in_blur_source
+                        || self.source_ink(node).is_some_and(|ink| {
+                            outside_clip(screen_transform.transform_rect_bbox(ink))
+                        })));
             #[cfg(not(feature = "ahcut"))]
             let can_skip = true;
             if can_skip {
