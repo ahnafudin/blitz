@@ -208,6 +208,7 @@ pub(super) fn reflected_write(doc: &BaseDocument, id: NodeId) -> JsResult<()> {
 }
 
 /// Link relations are frozen at load, including links for icons and preloads.
+/// Every new native writer of a connected link's attributes must also pass this check.
 pub(super) fn connected_link_write(doc: &BaseDocument, id: NodeId) -> JsResult<()> {
     if doc.font_stylesheets_frozen()
         && doc.get_node(id).is_some_and(|node| {

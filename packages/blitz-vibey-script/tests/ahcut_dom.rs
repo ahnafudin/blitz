@@ -246,6 +246,44 @@ fn reflected_properties_preserve_element_interfaces_and_connected_stylesheet_fre
 }
 
 #[test]
+fn geometry_bootstraps_after_the_element_interfaces() {
+    let mut doc = document();
+    assert_eq!(
+        observe(
+            &mut doc,
+            r#"(()=>{
+        const rect=Element.prototype.getBoundingClientRect;
+        const html=document.documentElement, svg=document.getElementById('g');
+        return [Object.getPrototypeOf(HTMLElement.prototype)===Element.prototype,
+            rect.call(html) instanceof DOMRect,rect.call(svg) instanceof DOMRect,
+            svg.getBBox() instanceof DOMRect];
+    })()"#
+        ),
+        "[true,true,true,true]"
+    );
+}
+
+#[test]
+fn base_href_resolves_against_the_document_url_even_after_another_base() {
+    let config = DocumentConfig {
+        base_url: Some("https://assets.invalid/project/index.html".into()),
+        ..DocumentConfig::default()
+    };
+    let mut doc = ScriptDocument::from_html(
+        "<!doctype html><head><base href='https://elsewhere.invalid/'><base id='next' href='images/'></head>",
+        config,
+    );
+    doc.execute_scripts();
+    assert_eq!(
+        observe(
+            &mut doc,
+            "[document.getElementById('next').href, document.createElement('base').href]"
+        ),
+        r#"["https://assets.invalid/project/images/","https://assets.invalid/project/index.html"]"#
+    );
+}
+
+#[test]
 fn every_connected_link_keeps_its_attributes_and_names_the_html_remedy() {
     let mut doc = ScriptDocument::from_html(
         "<!doctype html><link rel='icon' media='print' style='color:red'>",
