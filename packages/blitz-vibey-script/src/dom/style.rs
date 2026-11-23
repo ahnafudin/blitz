@@ -95,10 +95,13 @@ fn read_style_attr(ctx: &crate::state::DomCtx, node_id: NodeId) -> String {
         .to_string()
 }
 
-fn write_style_attr(ctx: &crate::state::DomCtx, node_id: NodeId, style_attr: &str) {
+fn write_style_attr(ctx: &crate::state::DomCtx, node_id: NodeId, style_attr: &str) -> JsResult<()> {
     let mut doc = ctx.doc.borrow_mut();
+    #[cfg(feature = "ahcut")]
+    super::font_mutations::connected_link_write(&doc, node_id)?;
     doc.mutate()
         .set_attribute(node_id, attr_name("style"), style_attr);
+    Ok(())
 }
 
 fn get_css_text(this: &JsValue, _: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
@@ -125,7 +128,7 @@ pub(crate) fn set_css_text(
     // Parse and re-serialize so that the stored attribute is canonical and
     // invalid declarations are dropped
     let css = ctx.doc.borrow().style_attr_serialize(&css);
-    write_style_attr(&ctx, node_id, &css);
+    write_style_attr(&ctx, node_id, &css)?;
     Ok(JsValue::undefined())
 }
 
@@ -158,7 +161,7 @@ fn set_property(this: &JsValue, args: &[JsValue], context: &mut Context) -> JsRe
             .style_attr_set_property(&style_attr, &name, &value, important);
     // `None` means the declaration was invalid: ignore it (per CSSOM)
     if let Some(new_style_attr) = new_style_attr {
-        write_style_attr(&ctx, node_id, &new_style_attr);
+        write_style_attr(&ctx, node_id, &new_style_attr)?;
     }
     Ok(JsValue::undefined())
 }
@@ -176,7 +179,7 @@ fn remove_property(this: &JsValue, args: &[JsValue], context: &mut Context) -> J
     let Some((new_style_attr, removed_value)) = removed else {
         return Ok(js_str(""));
     };
-    write_style_attr(&ctx, node_id, &new_style_attr);
+    write_style_attr(&ctx, node_id, &new_style_attr)?;
     Ok(js_str(&removed_value))
 }
 

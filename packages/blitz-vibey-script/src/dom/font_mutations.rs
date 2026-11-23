@@ -5,6 +5,8 @@ use boa_engine::{Context, JsNativeError, JsResult, JsValue, NativeFunction};
 
 const REBUILD: &str =
     "STYLESHEET_REBUILD_REQUIRED: recreate ScriptDocument to change stylesheet definitions";
+const LINK_WRITE: &str =
+    "STYLESHEET_REBUILD_REQUIRED: set link attributes in the HTML, not from script";
 fn refusal() -> boa_engine::JsError {
     JsNativeError::typ().with_message(REBUILD).into()
 }
@@ -160,6 +162,11 @@ fn preflight(
         return Ok(owned);
     }
     let target = node_id_of_value(this);
+    if kind == 1
+        && let Some(id) = target
+    {
+        connected_link_write(&doc, id)?;
+    }
     // A move is refused when the subtree that moves holds a style sheet, or when it would land inside one:
     // that is what could change the set, the order or the text of style sheets. A subtree without a style
     // sheet may land anywhere else.
@@ -187,6 +194,7 @@ fn preflight(
 /// A detached element has no active style sheet. Check after Web IDL conversion, since the
 /// script supplying the value can itself mutate the tree during conversion.
 pub(super) fn reflected_write(doc: &BaseDocument, id: NodeId) -> JsResult<()> {
+    connected_link_write(doc, id)?;
     if !doc.font_stylesheets_valid()
         || (doc.font_stylesheets_frozen()
             && doc
@@ -195,6 +203,22 @@ pub(super) fn reflected_write(doc: &BaseDocument, id: NodeId) -> JsResult<()> {
             && css_ancestor(doc, id))
     {
         return Err(refusal());
+    }
+    Ok(())
+}
+
+/// Link relations are frozen at load, including links for icons and preloads.
+pub(super) fn connected_link_write(doc: &BaseDocument, id: NodeId) -> JsResult<()> {
+    if doc.font_stylesheets_frozen()
+        && doc.get_node(id).is_some_and(|node| {
+            node.flags.is_in_document()
+                && node.element_data().is_some_and(|el| {
+                    el.name.ns == blitz_dom::ns!(html)
+                        && el.name.local == blitz_dom::local_name!("link")
+                })
+        })
+    {
+        return Err(JsNativeError::typ().with_message(LINK_WRITE).into());
     }
     Ok(())
 }
