@@ -2,13 +2,38 @@
 //! and refuse, and the `src` property as the `src` attribute.
 #![cfg(feature = "ahcut")]
 
-use blitz_dom::DocumentConfig;
+use blitz_dom::{Document, DocumentConfig};
 use blitz_traits::net::{NetHandler, NetProvider, Request};
 use blitz_vibey_script::ScriptDocument;
 use std::sync::{Arc, Mutex};
 
 const HEAD_SHEET: &str =
     "#free,#held{position:absolute}#wrap{position:relative}#hidden{display:none}";
+
+#[test]
+fn checked_style_ingress_preserves_the_first_refusal_even_after_script_catches_it() {
+    const MOTION: &str = "CSS_KEYFRAMES_REFUSED:write the animation on the timeline in __seek";
+    const STROKE: &str = "STYLE_PROPERTY_REFUSED:use filled text or an outlined SVG path";
+    for (sheet, inline, write, expected) in [
+        ("@media print{@supports(display:grid){@\\6b eyframes unused{to{opacity:1}}}}","","",Some(MOTION)),
+        ("@-webkit-keyframes unused{from{opacity:0}}","","",Some(MOTION)),
+        ("a:hover{-WEBKIT-TEXT-STROKE-COLOR:blue}","","",Some(STROKE)),
+        ("","-webkit-text-stroke:1px red","",Some(STROKE)),
+        ("","","el.style.webkitTextStrokeWidth='1px';el.style.cssText='color:red'",Some(STROKE)),
+        ("","","el.style.setProperty('-webkit-text-stroke','1px red')",Some(STROKE)),
+        ("","","el.style.cssText='-webkit-text-stroke-color:blue'",Some(STROKE)),
+        ("p{color:blue}","","document.styleSheets[0].cssRules[0].style.webkitTextStrokeWidth='2px'",Some(STROKE)),
+        ("p{color:blue}","","document.styleSheets[0].insertRule('@keyframes unused{}',0)",Some(MOTION)),
+        ("@keyframes unused{}","","el.style.webkitTextStroke='1px red'",Some(MOTION)),
+        ("/* @keyframes fake {} */ p{content:'-webkit-text-stroke:1px';--shape:{ @keyframes fake{} };color:blue}","","el.style.color='navy'",None),
+    ] {
+        let page = format!("<!doctype html><style>{sheet}</style><p id='el' style='{inline}'>text</p>");
+        let mut doc = ScriptDocument::from_html(&page,DocumentConfig::default());
+        doc.execute_scripts();
+        doc.eval(&format!("const el=document.getElementById('el');try{{{write}}}catch(e){{}}"));
+        assert_eq!(doc.inner().script_style_refusal(),expected,"sheet={sheet}, inline={inline}, write={write}");
+    }
+}
 
 fn document() -> ScriptDocument {
     let html = format!(
