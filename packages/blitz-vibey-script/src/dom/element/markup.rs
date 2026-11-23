@@ -77,6 +77,8 @@ pub(super) fn set_inner_html(
     let node_id = this_node_id(this)?;
     let html = to_rust_string(args.first().unwrap_or(&JsValue::undefined()), context)?;
 
+    #[cfg(feature = "ahcut")]
+    crate::dom::script_insertion::check_markup(&ctx.doc.borrow(), node_id, &html)?;
     let mut doc = ctx.doc.borrow_mut();
     let mut mutr = doc.mutate();
     // Detach (rather than drop) any existing children so that JS wrappers

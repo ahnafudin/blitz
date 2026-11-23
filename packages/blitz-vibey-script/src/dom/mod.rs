@@ -13,6 +13,8 @@ pub(crate) mod event;
 mod font_mutations;
 pub(crate) mod hyperlink;
 pub(crate) mod node;
+#[cfg(feature = "ahcut")]
+mod script_insertion;
 pub(crate) mod selection;
 pub(crate) mod style;
 pub(crate) mod stylesheet;

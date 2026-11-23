@@ -295,6 +295,8 @@ fn append_child(this: &JsValue, args: &[JsValue], context: &mut Context) -> JsRe
     let child_id = arg_node_id(args, 0)?;
     // Inserting a DocumentFragment moves its children
     let node_ids = insertable_node_ids(&ctx, child_id);
+    #[cfg(feature = "ahcut")]
+    super::script_insertion::check(&ctx.doc.borrow(), &node_ids)?;
 
     let mut doc = ctx.doc.borrow_mut();
     let mut mutr = doc.mutate();
@@ -328,6 +330,8 @@ fn insert_before(this: &JsValue, args: &[JsValue], context: &mut Context) -> JsR
 
     // Inserting a DocumentFragment moves its children
     let node_ids = insertable_node_ids(&ctx, new_id);
+    #[cfg(feature = "ahcut")]
+    super::script_insertion::check(&ctx.doc.borrow(), &node_ids)?;
 
     let mut doc = ctx.doc.borrow_mut();
     let mut mutr = doc.mutate();
@@ -384,6 +388,8 @@ fn replace_child(this: &JsValue, args: &[JsValue], context: &mut Context) -> JsR
     if new_id != old_id {
         // Inserting a DocumentFragment moves its children
         let node_ids = insertable_node_ids(&ctx, new_id);
+        #[cfg(feature = "ahcut")]
+        super::script_insertion::check(&ctx.doc.borrow(), &node_ids)?;
 
         let mut doc = ctx.doc.borrow_mut();
         let mut mutr = doc.mutate();
@@ -420,7 +426,10 @@ pub(crate) fn is_fragment(doc: &blitz_dom::BaseDocument, node_id: NodeId) -> boo
 /// steps: DocumentFragments are expanded into (and their children detached
 /// from) their children; other nodes insert as themselves.
 fn insertable_node_ids(ctx: &crate::state::DomCtx, node_id: NodeId) -> Vec<NodeId> {
+    #[cfg(not(feature = "ahcut"))]
     let mut doc = ctx.doc.borrow_mut();
+    #[cfg(feature = "ahcut")]
+    let doc = ctx.doc.borrow();
     if !is_fragment(&doc, node_id) {
         return vec![node_id];
     }
@@ -428,9 +437,12 @@ fn insertable_node_ids(ctx: &crate::state::DomCtx, node_id: NodeId) -> Vec<NodeI
         .get_node(node_id)
         .map(|node| node.children.to_vec())
         .unwrap_or_default();
-    let mut mutr = doc.mutate();
-    for child_id in &child_ids {
-        mutr.remove_node(*child_id);
+    #[cfg(not(feature = "ahcut"))]
+    {
+        let mut mutr = doc.mutate();
+        for child_id in &child_ids {
+            mutr.remove_node(*child_id);
+        }
     }
     child_ids
 }
@@ -447,6 +459,7 @@ fn arg_node_ids(
     ctx: &crate::state::DomCtx,
     args: &[JsValue],
     context: &mut Context,
+    _sibling_anchor: Option<NodeId>,
 ) -> JsResult<Vec<NodeId>> {
     let mut node_ids = Vec::with_capacity(args.len());
     for arg in args {
@@ -457,6 +470,16 @@ fn arg_node_ids(
                 node_ids.push(ctx.doc.borrow_mut().mutate().create_text_node(&text));
             }
         };
+    }
+    #[cfg(feature = "ahcut")]
+    {
+        let doc = ctx.doc.borrow();
+        // before/after/replaceWith do nothing if their receiver has no parent.
+        if _sibling_anchor
+            .is_none_or(|id| doc.get_node(id).is_some_and(|node| node.parent.is_some()))
+        {
+            super::script_insertion::check(&doc, &node_ids)?;
+        }
     }
     Ok(node_ids)
 }
@@ -474,7 +497,7 @@ fn detach_all(mutr: &mut blitz_dom::DocumentMutator<'_>, node_ids: &[NodeId]) {
 pub(crate) fn append(this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
     let ctx = dom_ctx(context)?;
     let parent_id = this_node_id(this)?;
-    let node_ids = arg_node_ids(&ctx, args, context)?;
+    let node_ids = arg_node_ids(&ctx, args, context, None)?;
     let mut doc = ctx.doc.borrow_mut();
     doc.mutate().append_children(parent_id, &node_ids);
     Ok(JsValue::undefined())
@@ -487,7 +510,7 @@ pub(crate) fn prepend(
 ) -> JsResult<JsValue> {
     let ctx = dom_ctx(context)?;
     let parent_id = this_node_id(this)?;
-    let node_ids = arg_node_ids(&ctx, args, context)?;
+    let node_ids = arg_node_ids(&ctx, args, context, None)?;
     let mut doc = ctx.doc.borrow_mut();
     doc.mutate().prepend_nodes(parent_id, &node_ids);
     Ok(JsValue::undefined())
@@ -500,7 +523,7 @@ pub(crate) fn replace_children(
 ) -> JsResult<JsValue> {
     let ctx = dom_ctx(context)?;
     let parent_id = this_node_id(this)?;
-    let node_ids = arg_node_ids(&ctx, args, context)?;
+    let node_ids = arg_node_ids(&ctx, args, context, None)?;
     let mut doc = ctx.doc.borrow_mut();
     doc.mutate().replace_children(parent_id, &node_ids);
     Ok(JsValue::undefined())
@@ -509,7 +532,7 @@ pub(crate) fn replace_children(
 fn before(this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
     let ctx = dom_ctx(context)?;
     let anchor_id = this_node_id(this)?;
-    let node_ids = arg_node_ids(&ctx, args, context)?;
+    let node_ids = arg_node_ids(&ctx, args, context, Some(anchor_id))?;
     let mut doc = ctx.doc.borrow_mut();
     doc.mutate().before_node(anchor_id, &node_ids);
     Ok(JsValue::undefined())
@@ -518,7 +541,7 @@ fn before(this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<J
 fn after(this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
     let ctx = dom_ctx(context)?;
     let anchor_id = this_node_id(this)?;
-    let node_ids = arg_node_ids(&ctx, args, context)?;
+    let node_ids = arg_node_ids(&ctx, args, context, Some(anchor_id))?;
     let mut doc = ctx.doc.borrow_mut();
     doc.mutate().after_node(anchor_id, &node_ids);
     Ok(JsValue::undefined())
@@ -527,7 +550,7 @@ fn after(this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<Js
 fn replace_with(this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
     let ctx = dom_ctx(context)?;
     let anchor_id = this_node_id(this)?;
-    let node_ids = arg_node_ids(&ctx, args, context)?;
+    let node_ids = arg_node_ids(&ctx, args, context, Some(anchor_id))?;
     let mut doc = ctx.doc.borrow_mut();
     doc.mutate().replace_with_nodes(anchor_id, &node_ids);
     Ok(JsValue::undefined())

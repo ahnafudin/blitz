@@ -104,7 +104,11 @@ fn document() -> ScriptDocument {
 
 #[test]
 fn a_script_inserted_by_script_is_refused_at_the_call_before_the_tree_changes() {
-    let mut doc = document();
+    let mut doc = ScriptDocument::from_html(
+        "<!doctype html><body><div id='plain'></div></body>",
+        DocumentConfig::default(),
+    );
+    doc.execute_scripts();
     for write in [
         "body.appendChild(script)",
         "body.insertBefore(script, keep)",
@@ -117,43 +121,85 @@ fn a_script_inserted_by_script_is_refused_at_the_call_before_the_tree_changes() 
         "keep.after(script)",
         "keep.innerHTML='<strong></strong><ScRiPt>0</ScRiPt>'",
     ] {
-        let result = observe(&mut doc,&format!("(()=>{{const body=document.body,keep=document.getElementById('plain'),script=document.createElement('script'); const before=body.innerHTML;try{{{write};return 'accepted'}}catch(e){{return [String(e),body.innerHTML===before,script.parentNode===null]}}}})()"));
-        assert_eq!(result,r#"["TypeError: SCRIPT_INSERT_REFUSED:declare the script in the initial HTML",true,true]"#,"{write}");
+        let result = observe(
+            &mut doc,
+            &format!(
+                "(()=>{{const body=document.body,keep=document.getElementById('plain'),script=document.createElement('script'); const before=body.innerHTML;try{{{write};return 'accepted'}}catch(e){{return [String(e),body.innerHTML===before,script.parentNode===null]}}}})()"
+            ),
+        );
+        assert_eq!(
+            result,
+            r#"["TypeError: SCRIPT_INSERT_REFUSED:declare the script in the initial HTML",true,true]"#,
+            "{write}"
+        );
     }
-    assert_eq!(observe(&mut doc, "(()=>{const el=document.getElementById('plain');el.innerHTML=\"<!-- <script> --><textarea><script></textarea><span title='<script>'>ok</span>\";return el.querySelector('span').textContent})()"), r#""ok""#);
+    assert_eq!(
+        observe(
+            &mut doc,
+            "(()=>{const el=document.getElementById('plain');el.innerHTML=\"<!-- <script> --><textarea><script></textarea><span title='<script>'>ok</span>\";return el.querySelector('span').textContent})()"
+        ),
+        r#""ok""#
+    );
+    assert_eq!(
+        observe(
+            &mut doc,
+            "(()=>{const el=document.createElement('div'),s=document.createElement('script');el.after(s);return s.parentNode===null})()"
+        ),
+        "true"
+    );
 }
 
 #[test]
 fn reflected_html_strings_and_direction_track_the_content_attribute() {
-    let mut doc = ScriptDocument::from_html("<!doctype html><head><link rel='icon' media='print'></head><body></body>",DocumentConfig::default());
+    let mut doc = ScriptDocument::from_html(
+        "<!doctype html><head><link rel='icon' media='print'></head><body></body>",
+        DocumentConfig::default(),
+    );
     doc.execute_scripts();
-    assert_eq!(observe(&mut doc,r#"(()=>{
+    assert_eq!(
+        observe(
+            &mut doc,
+            r#"(()=>{
         const img=document.createElement('img'), link=document.querySelector('link');
         img.lang='en-GB'; img.alt='a picture'; img.dir='RtL';
         const dir=[img.dir,img.getAttribute('dir')]; img.setAttribute('dir','no');
         const a=document.createElement('a'), s=document.createElement('source'); a.rel='help'; s.media='screen';
         return [img.lang,img.getAttribute('alt'),dir,img.dir,a.getAttribute('rel'),s.getAttribute('media'),link.rel,link.media];
-    })()"#),r#"["en-GB","a picture",["rtl","RtL"],"","help","screen","icon","print"]"#);
+    })()"#
+        ),
+        r#"["en-GB","a picture",["rtl","RtL"],"","help","screen","icon","print"]"#
+    );
 }
 
 #[test]
 fn reflected_html_booleans_use_presence_and_integers_follow_their_idl_ranges() {
     let mut doc = document();
-    assert_eq!(observe(&mut doc,r#"(()=>{
+    assert_eq!(
+        observe(
+            &mut doc,
+            r#"(()=>{
         const make=t=>document.createElement(t), d=make('details'),ol=make('ol'),li=make('li'),td=make('td'),col=make('col');
         d.open='false';const b=[d.open,d.getAttribute('open')];d.open=false;
         ol.reversed=true;const initial=ol.start;ol.setAttribute('start','  -3items');li.value=-8.9;
         td.colSpan=2000;td.rowSpan=0;col.setAttribute('span','+12cols');
         const sizes=[td.colSpan,td.getAttribute('colspan'),td.rowSpan,col.span];td.rowSpan=-1;
         return [b,d.hasAttribute('open'),ol.reversed,initial,ol.start,li.value,li.getAttribute('value'),sizes,td.rowSpan];
-    })()"#),r#"[[true,""],false,true,1,-3,-8,"-8",[1000,"2000",0,12],1]"#);
+    })()"#
+        ),
+        r#"[[true,""],false,true,1,-3,-8,"-8",[1000,"2000",0,12],1]"#
+    );
 }
 
 #[test]
 fn href_assignment_on_an_unrelated_element_remains_an_ordinary_property() {
     let mut doc = document();
-    assert_eq!(observe(&mut doc,"(()=>{const d=document.createElement('div'),a=document.createElement('a');const before='href' in d;const val={marker:3};d.href=val;a.href='https://assets.invalid/a';return [before,d.href===val,d.getAttribute('href'),a.getAttribute('href')]})()"),
-        r#"[false,true,null,"https://assets.invalid/a"]"#);
+    assert_eq!(
+        observe(
+            &mut doc,
+            "(()=>{const d=document.createElement('div'),a=document.createElement('a');const before='href' in d;const val={marker:3};d.href=val;a.href='https://assets.invalid/a';return [before,d.href===val,d.getAttribute('href'),a.getAttribute('href')]})()"
+        ),
+        r#"[false,true,null,"https://assets.invalid/a"]"#
+    );
 }
 
 #[test]
