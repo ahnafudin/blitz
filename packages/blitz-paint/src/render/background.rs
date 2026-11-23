@@ -268,7 +268,7 @@ impl ElementCx<'_, '_> {
     }
 
     /// Paint the backgrounds of the table's column groups, columns, row groups and rows
-    /// (in that order, bottom to top: CSS 2.1 Â§17.5.1).
+    /// (in that order, bottom to top: CSS 2.1 §17.5.1).
     ///
     /// These backgrounds are only painted behind the table's cells (not in the
     /// `border-spacing` between them, nor where a row has no cell), so they are

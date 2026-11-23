@@ -246,7 +246,7 @@ fn one_lookup_sizes_images_and_refuses_only_when_the_facts_are_painted() {
         assert_eq!(
             refusal,
             anyrender::filters::FilterError::Unsupported(
-                "IMAGE_REFUSED:use a recording sink that binds frozen project images, or inline the shape as SVG"
+                "IMAGE_BINDING_UNSUPPORTED:the paint sink cannot bind a frozen project image; use a project-image recording sink"
             )
         );
         assert!(scene.commands.is_empty());

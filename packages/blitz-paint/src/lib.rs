@@ -35,7 +35,7 @@ type CustomWidgetSceneMap = HashMap<(usize, NodeId), Scene>;
 
 /// A checked painter must bind visible project images before it accepts any draw commands.
 #[cfg(feature = "ahcut")]
-pub const IMAGE_RESOURCE_REFUSED: &str = "IMAGE_REFUSED:use a recording sink that binds frozen project images, or inline the shape as SVG";
+pub const IMAGE_BINDING_UNSUPPORTED: &str = "IMAGE_BINDING_UNSUPPORTED:the paint sink cannot bind a frozen project image; use a project-image recording sink";
 
 /// Paint a [`blitz_dom::BaseDocument`] by pushing drawing commands into
 /// an impl [`anyrender::PaintScene`].
@@ -167,7 +167,7 @@ pub fn try_paint_scene(
             for id in images.values().filter_map(|(_, resource)| *resource) {
                 scene.unregister_resource(id);
             }
-            return Err(FilterError::Unsupported(IMAGE_RESOURCE_REFUSED));
+            return Err(FilterError::Unsupported(IMAGE_BINDING_UNSUPPORTED));
         }
     }
     generator.paint_scene(scene);
