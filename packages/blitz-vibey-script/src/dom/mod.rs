@@ -110,6 +110,8 @@ pub(crate) fn node_wrapper(ctx: &DomCtx, node_id: NodeId, context: &mut Context)
         .borrow_mut()
         .node_wrappers
         .insert(node_id, wrapper.clone());
+    #[cfg(feature = "ahcut")]
+    crate::runtime::image_events::initialize_attributes(ctx, node_id, &wrapper, context);
     wrapper
 }
 

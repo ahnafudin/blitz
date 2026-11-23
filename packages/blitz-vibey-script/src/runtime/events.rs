@@ -411,7 +411,16 @@ impl ScriptRuntime {
         };
 
         let global: JsValue = context.global_object().into();
-        let event_obj = create_event(&ctx, name, false, false, &global, context);
+        #[cfg(feature = "ahcut")]
+        let target = if name == "load" {
+            let root = ctx.doc.borrow().root_node().id;
+            node_wrapper(&ctx, root, context).into()
+        } else {
+            global.clone()
+        };
+        #[cfg(not(feature = "ahcut"))]
+        let target = global.clone();
+        let event_obj = create_event(&ctx, name, false, false, &target, context);
         crate::dom::define_value(&event_obj, "currentTarget", global.clone(), context);
 
         let mut any_called = false;
@@ -462,16 +471,22 @@ pub(super) fn window_add_event_listener(
         return Ok(JsValue::undefined());
     };
 
+    #[cfg(feature = "ahcut")]
+    let (capture, once) = crate::dom::node::listener_options(args, context)?;
+    #[cfg(not(feature = "ahcut"))]
+    let (capture, once) = (false, false);
     let mut state = ctx.state.borrow_mut();
     let listeners = state.window_listeners.entry(event_type).or_default();
     if !listeners
         .iter()
-        .any(|l| JsObject::equals(&l.callback, &callback))
+        .any(|l| JsObject::equals(&l.callback, &callback) && l.capture == capture)
     {
         listeners.push(Listener {
             callback,
-            capture: false,
-            once: false,
+            capture,
+            once,
+            #[cfg(feature = "ahcut")]
+            registration: Default::default(),
         });
     }
     Ok(JsValue::undefined())
@@ -489,9 +504,13 @@ pub(super) fn window_remove_event_listener(
         return Ok(JsValue::undefined());
     };
 
+    #[cfg(feature = "ahcut")]
+    let capture = crate::dom::node::listener_capture(args, context)?;
+    #[cfg(not(feature = "ahcut"))]
+    let capture = false;
     let mut state = ctx.state.borrow_mut();
     if let Some(listeners) = state.window_listeners.get_mut(&event_type) {
-        listeners.retain(|l| !JsObject::equals(&l.callback, &callback));
+        listeners.retain(|l| !(JsObject::equals(&l.callback, &callback) && l.capture == capture));
     }
     Ok(JsValue::undefined())
 }

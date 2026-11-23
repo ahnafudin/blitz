@@ -54,6 +54,8 @@ pub(crate) struct Listener {
     pub callback: JsObject,
     pub capture: bool,
     pub once: bool,
+    #[cfg(feature = "ahcut")]
+    pub registration: Rc<()>,
 }
 
 pub(crate) type ListenerMap = HashMap<String, Vec<Listener>>;
@@ -94,6 +96,11 @@ pub(crate) struct RuntimeState {
     /// by the *same* JS object: scripts rely on object identity (`===`) and on
     /// expando properties persisting across accesses.
     pub node_wrappers: HashMap<NodeId, JsObject>,
+    #[cfg(feature = "ahcut")]
+    pub image_decodes: crate::runtime::images::ImageDecodes,
+    /// Private bootstrap entry that activates or updates an image's content attribute handler.
+    #[cfg(feature = "ahcut")]
+    pub image_handler_attribute: Option<JsObject>,
     /// The document's single JS Selection wrapper.
     pub selection: Option<JsObject>,
     /// Event listeners registered on nodes, keyed by node id then event type.

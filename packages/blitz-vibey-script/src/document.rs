@@ -257,13 +257,27 @@ impl ScriptDocument {
         self.runtime
             .set_ready_state(crate::state::ReadyState::Interactive);
         self.runtime.dispatch_document_event("DOMContentLoaded");
+        self.finish_window_load();
+
+        self.request_redraw();
+        self.arm_timer_thread();
+    }
+
+    fn finish_window_load(&mut self) -> bool {
+        #[cfg(feature = "ahcut")]
+        if !matches!(
+            self.runtime.ctx.state.borrow().ready_state,
+            crate::state::ReadyState::Interactive
+        ) || self.inner.borrow().has_load_blocking_image()
+        {
+            return false;
+        }
         self.runtime
             .set_ready_state(crate::state::ReadyState::Complete);
         self.runtime.install_body_onload_attribute();
         self.runtime.dispatch_window_event("load");
 
-        self.request_redraw();
-        self.arm_timer_thread();
+        true
     }
 
     /// The resolved URLs of the document's external (`<script src="...">`) scripts,
@@ -511,9 +525,17 @@ impl Document for ScriptDocument {
 
         ran |= self.runtime.run_due_timers();
         #[cfg(feature = "ahcut")]
+        {
+            ran |= self.runtime.poll_images();
+        }
+        #[cfg(feature = "ahcut")]
         if self.runtime.poll_font_loads() {
             self.runtime.run_jobs("font completion microtasks");
             ran = true;
+        }
+        #[cfg(feature = "ahcut")]
+        {
+            ran |= self.finish_window_load();
         }
         self.arm_timer_thread();
         ran

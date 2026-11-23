@@ -27,6 +27,10 @@ mod events;
 mod fetch;
 #[cfg(feature = "ahcut")]
 mod fonts;
+#[cfg(feature = "ahcut")]
+pub(crate) mod image_events;
+#[cfg(feature = "ahcut")]
+pub(crate) mod images;
 mod modules;
 mod timers;
 mod window;
@@ -132,6 +136,8 @@ impl ScriptRuntime {
 
         // Install JavaScript APIs after the native bindings.
         runtime.eval_internal(BOOTSTRAP_JS, "<blitz-bootstrap>");
+        #[cfg(feature = "ahcut")]
+        images::install(&runtime.ctx, &mut runtime.context);
         #[cfg(feature = "ahcut")]
         runtime.eval_internal(bootstrap::FONT_LOADING_JS, "<blitz-font-loading>");
         runtime.eval_internal(GEOMETRY_JS, "<blitz-geometry>");

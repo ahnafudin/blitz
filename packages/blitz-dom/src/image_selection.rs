@@ -43,6 +43,27 @@ impl BaseDocument {
             .as_deref()
     }
 
+    /// A current HTML image delays document load through delivery of its completion task.
+    /// An abandoned request can still be fetching for the cache, and CSS uses the same
+    /// resource queue. Neither is a pending HTML image selection.
+    pub fn has_load_blocking_image(&self) -> bool {
+        self.image_completions.iter().any(|&(id, token)| {
+            self.image_selection(id)
+                .is_some_and(|selection| selection.token == token)
+        }) || self.pending_images.iter().any(|(url, waiters)| {
+            waiters.iter().any(|&(id, kind)| {
+                matches!(kind, ImageType::Image)
+                    && self.image_selection(id).is_some_and(|selection| {
+                        selection.status == ImageSelectionStatus::Pending
+                            && selection
+                                .url
+                                .as_ref()
+                                .is_some_and(|selected| selected.as_str() == url)
+                    })
+            })
+        })
+    }
+
     /// Take one still-current completion. A handler may reselect another image before the next call.
     pub fn pop_image_completion(&mut self) -> Option<(NodeId, u64)> {
         while let Some((id, token)) = self.image_completions.pop_front() {

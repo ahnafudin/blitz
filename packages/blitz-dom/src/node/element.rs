@@ -936,6 +936,26 @@ pub enum ImageData {
 }
 
 impl ImageData {
+    /// The natural size exposed by a 1x HTML image, independent of its CSS box.
+    #[cfg(feature = "ahcut")]
+    pub fn natural_size(&self) -> (u32, u32) {
+        #[cfg(feature = "svg")]
+        if let Self::Svg(svg) = self {
+            // For a dimensionless SVG, the geometry of its painted children must
+            // not leak into the HTML image's default object size (300 by 150).
+            let (width, height) = if svg.viewbox_aspect_ratio().is_some() {
+                svg.intrinsic_size()
+            } else {
+                (
+                    svg.intrinsic_width().unwrap_or(300.0),
+                    svg.intrinsic_height().unwrap_or(150.0),
+                )
+            };
+            return (width as u32, height as u32);
+        }
+        self.intrinsic_raster_size().unwrap_or_default()
+    }
+
     /// Oriented intrinsic dimensions of a raster, whether its pixels or just its facts are loaded.
     pub fn intrinsic_raster_size(&self) -> Option<(u32, u32)> {
         match self {

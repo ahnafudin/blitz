@@ -159,6 +159,15 @@ pub(super) fn set_attribute(
     );
     let value = to_rust_string(args.get(1).unwrap_or(&JsValue::undefined()), context)?;
     write_attr(&ctx, node_id, &name, &value);
+    #[cfg(feature = "ahcut")]
+    crate::runtime::image_events::changed_attribute(
+        &ctx,
+        node_id,
+        this,
+        &name,
+        Some(&value),
+        context,
+    );
     Ok(JsValue::undefined())
 }
 
@@ -174,7 +183,14 @@ pub(super) fn remove_attribute(
         node_id,
         to_rust_string(args.first().unwrap_or(&JsValue::undefined()), context)?,
     );
+    #[cfg(feature = "ahcut")]
+    let removed_handler =
+        matches!(name.as_str(), "onload" | "onerror") && read_attr(&ctx, node_id, &name).is_some();
     clear_attr(&ctx, node_id, &name);
+    #[cfg(feature = "ahcut")]
+    if removed_handler {
+        crate::runtime::image_events::changed_attribute(&ctx, node_id, this, &name, None, context);
+    }
     Ok(JsValue::undefined())
 }
 

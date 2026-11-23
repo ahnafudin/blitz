@@ -643,21 +643,7 @@ fn add_event_listener(
     }
 
     // Parse options (bool `capture` or `{ capture, once }`)
-    let mut capture = false;
-    let mut once = false;
-    match args.get(2) {
-        Some(options) if options.is_object() => {
-            let options = options.as_object().unwrap();
-            capture = options
-                .get(boa_engine::js_string!("capture"), context)?
-                .to_boolean();
-            once = options
-                .get(boa_engine::js_string!("once"), context)?
-                .to_boolean();
-        }
-        Some(options) => capture = options.to_boolean(),
-        None => {}
-    }
+    let (capture, once) = listener_options(args, context)?;
 
     let mut state = ctx.state.borrow_mut();
     let listeners = state
@@ -676,6 +662,8 @@ fn add_event_listener(
             callback,
             capture,
             once,
+            #[cfg(feature = "ahcut")]
+            registration: Default::default(),
         });
     }
 
@@ -694,15 +682,7 @@ fn remove_event_listener(
         return Ok(JsValue::undefined());
     };
 
-    let capture = match args.get(2) {
-        Some(options) if options.is_object() => options
-            .as_object()
-            .unwrap()
-            .get(boa_engine::js_string!("capture"), context)?
-            .to_boolean(),
-        Some(options) => options.to_boolean(),
-        None => false,
-    };
+    let capture = listener_capture(args, context)?;
 
     let mut state = ctx.state.borrow_mut();
     if let Some(listeners) = state
@@ -712,6 +692,29 @@ fn remove_event_listener(
     {
         listeners.retain(|l| !(JsObject::equals(&l.callback, &callback) && l.capture == capture));
     }
-
     Ok(JsValue::undefined())
+}
+
+pub(crate) fn listener_capture(args: &[JsValue], context: &mut Context) -> JsResult<bool> {
+    Ok(match args.get(2) {
+        Some(options) if options.is_object() => options
+            .as_object()
+            .unwrap()
+            .get(boa_engine::js_string!("capture"), context)?
+            .to_boolean(),
+        Some(options) => options.to_boolean(),
+        None => false,
+    })
+}
+
+pub(crate) fn listener_options(args: &[JsValue], context: &mut Context) -> JsResult<(bool, bool)> {
+    let capture = listener_capture(args, context)?;
+    let once = if let Some(options) = args.get(2).and_then(JsValue::as_object) {
+        options
+            .get(boa_engine::js_string!("once"), context)?
+            .to_boolean()
+    } else {
+        false
+    };
+    Ok((capture, once))
 }
