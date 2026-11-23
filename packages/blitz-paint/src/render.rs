@@ -588,7 +588,7 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
             let can_skip = !self.checked_filters
                 || (!self.subtree_has_blur(node)
                     && (!cull.in_blur_source
-                        || self.source_ink(node).is_some_and(|ink| {
+                        || self.source_ink(node, screen_transform).is_some_and(|ink| {
                             outside_clip(screen_transform.transform_rect_bbox(ink))
                         })));
             #[cfg(not(feature = "ahcut"))]
@@ -726,7 +726,7 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
                         border_box,
                         &effects.filter.0,
                         &effects.backdrop_filter.0,
-                        css_blur.map(|blur| blur.with_ink(self.source_ink(node))),
+                        css_blur.map(|blur| blur.with_ink(self.source_ink(node, screen_transform))),
                     )
                 } else {
                     (filter, backdrop_filter)
@@ -1143,6 +1143,15 @@ impl ElementCx<'_, '_> {
         }
     }
 
+    fn inline_text_origin(&self, layout: &blitz_dom::node::TextLayout, position: Point) -> Vec2 {
+        // Text keeps its unrounded position; only box edges are snapped to whole pixels.
+        let subpixel = layout.content_box_subpixel_offset;
+        Vec2::new(
+            position.x + f64::from(subpixel.x),
+            position.y + f64::from(subpixel.y) + f64::from(layout.block_offset),
+        ) * self.scale
+    }
+
     fn draw_inline_layout(&self, scene: &mut impl PaintScene, pos: Point) {
         if self.node.flags.is_inline_root() {
             let text_layout = self.element
@@ -1152,14 +1161,9 @@ impl ElementCx<'_, '_> {
                     panic!("Tried to render node marked as inline root that does not have an inline layout: {:?}", self.node);
                 });
 
-            // Text keeps its unrounded position; only box edges are snapped to whole pixels.
-            let subpixel_offset = text_layout.content_box_subpixel_offset;
-            let pos = Point {
-                x: pos.x + subpixel_offset.x as f64,
-                y: pos.y + subpixel_offset.y as f64 + text_layout.block_offset as f64,
-            };
-            let transform =
-                self.transform * Affine::translate((pos.x * self.scale, pos.y * self.scale));
+            let transform = self
+                .transform
+                .pre_translate(self.inline_text_origin(text_layout, pos));
 
             // Render inline element backgrounds (e.g. `<span style="background: ...">`)
             // behind the text and selection highlight.

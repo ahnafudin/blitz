@@ -3,9 +3,10 @@ use super::{BlitzDomPainter, ElementCx};
 use crate::filters::{StyloFilter, convert_filters_for_node};
 use anyrender::filters::{Filter, FilterError, GaussianBlurXY};
 use anyrender::{BoxShadowGeometry, BoxShadowKind};
-use blitz_dom::node::SpecialElementData;
+use blitz_dom::node::{SpecialElementData, TextBrush};
 use blitz_dom::{Node, NodeId};
-use kurbo::{Affine, Rect, Shape};
+use kurbo::{Affine, Point, Rect, Shape, Vec2};
+use parley::GlyphRun;
 use std::sync::Arc;
 
 type Filters = (Option<Arc<Filter>>, Option<Arc<Filter>>);
@@ -87,12 +88,12 @@ impl BlitzDomPainter<'_, '_> {
 
     /// Source ink in the node's local device pixels, before its own filter.
     /// Unknown extents keep the viewport crop and cannot justify culling a blur source.
-    pub(super) fn source_ink(&self, node: &Node) -> Option<Rect> {
+    pub(super) fn source_ink(&self, node: &Node, local_to_screen: Affine) -> Option<Rect> {
         if let Some(bounds) = self.ink_bounds.borrow().get(&node.id) {
             return *bounds;
         }
         let bounds = node.element_data().and_then(|_| {
-            let cx = self.element_cx(node, *node.final_layout(), Affine::IDENTITY, None);
+            let cx = self.element_cx(node, *node.final_layout(), local_to_screen, None);
             cx.source_ink()
         });
         self.ink_bounds.borrow_mut().insert(node.id, bounds);
@@ -161,19 +162,16 @@ impl ElementCx<'_, '_> {
         if self.should_clip_node(self.node, &self.style) {
             return Some(ink);
         }
-        // Layout overflow does not bound glyph overhangs, outside markers, embedded
-        // scenes, or a descendant's filter output. Keep their conservative crop.
+        // Outside markers, embedded scenes and nested filters can extend beyond layout.
         if !matches!(self.element.special_data, SpecialElementData::None)
             || self.list_item.is_some()
-            || self
-                .element
-                .inline_layout_data
-                .as_ref()
-                .is_some_and(|text| !text.text.is_empty())
             || self.node.scroll_offset().x != 0.0
             || self.node.scroll_offset().y != 0.0
         {
             return None;
+        }
+        if self.node.flags.is_inline_root() {
+            ink = self.include_text_ink(ink)?;
         }
         let mut bounds = Some(ink.union(*self.node.scrollable_overflow()));
         self.for_each_paint_child(Affine::IDENTITY, |id, parent| {
@@ -184,9 +182,91 @@ impl ElementCx<'_, '_> {
                     return None;
                 }
                 let transform = self.node_transform(node, parent);
-                Some(bounds.union(transform.transform_rect_bbox(self.context.source_ink(node)?)))
+                let child_ink = self.context.source_ink(node, self.transform * transform)?;
+                Some(bounds.union(transform.transform_rect_bbox(child_ink)))
             });
         });
         bounds
     }
+
+    fn include_text_ink(&self, mut ink: Rect) -> Option<Rect> {
+        let text = self.element.inline_layout_data.as_ref()?;
+        if self.selection_ranges.contains_key(&self.node.id) {
+            return None;
+        }
+        let layout = self.node.final_layout();
+        let inset = layout.padding + layout.border;
+        let origin = self.inline_text_origin(text, Point::new(inset.left.into(), inset.top.into()));
+        // Map one device pixel for hinting and antialiasing back to the local axes.
+        let inverse = self.transform.inverse();
+        if !inverse.is_finite() {
+            return None;
+        }
+        let [a, b, c, d, _, _] = inverse.as_coeffs();
+        // Optional stem darkening expands the outline in addition to antialiasing.
+        let margin = if crate::FONT_EMBOLDEN_ENABLED {
+            2.0
+        } else {
+            1.0
+        };
+        for line in text.layout.lines() {
+            for glyph_run in crate::text::glyph_runs(&line) {
+                let mut id = glyph_run.style().brush.id;
+                loop {
+                    let node = self.dom.get_node(id)?;
+                    let style = node.primary_styles()?;
+                    if !style.get_text().text_decoration_line.is_empty()
+                        || !style.get_inherited_text().text_shadow.0.is_empty()
+                    {
+                        return None;
+                    }
+                    if id == self.node.id {
+                        break;
+                    }
+                    id = node.parent?;
+                }
+                let run_ink = glyph_run_ink(&glyph_run)?
+                    .inflate(margin * (a.abs() + c.abs()), margin * (b.abs() + d.abs()));
+                ink = ink.union(run_ink + origin);
+            }
+        }
+        Some(ink)
+    }
+}
+
+fn glyph_run_ink(glyph_run: &GlyphRun<'_, TextBrush>) -> Option<Rect> {
+    use skrifa::raw::{FontRef, TableProvider as _, types::Tag};
+    let run = glyph_run.run();
+    let font = FontRef::from_index(run.font().data.as_ref(), run.font().index).ok()?;
+    // The head bounds cover outline glyphs at the default variation coordinates.
+    // Bitmap and colour paints can have ink outside these bounds.
+    if run
+        .normalized_coords()
+        .iter()
+        .any(|coord| coord.to_bits() != 0)
+        || [b"COLR", b"SVG ", b"sbix", b"CBDT", b"EBDT", b"bdat"]
+            .into_iter()
+            .any(|tag| font.table_data(Tag::new(tag)).is_some())
+    {
+        return None;
+    }
+    let head = font.head().ok()?;
+    if head.units_per_em() == 0 || head.x_min() > head.x_max() || head.y_min() > head.y_max() {
+        return None;
+    }
+    let scale = f64::from(run.font_size()) / f64::from(head.units_per_em());
+    let face = Rect::new(
+        f64::from(head.x_min()) * scale,
+        -f64::from(head.y_max()) * scale,
+        f64::from(head.x_max()) * scale,
+        -f64::from(head.y_min()) * scale,
+    );
+    let face = crate::text::glyph_transform(glyph_run)
+        .unwrap_or(Affine::IDENTITY)
+        .transform_rect_bbox(face);
+    let mut ink = crate::text::glyph_run_rect(glyph_run);
+    for glyph in glyph_run.positioned_glyphs() {
+        ink = ink.union(face + Vec2::new(glyph.x.into(), glyph.y.into()));
+    }
+    ink.is_finite().then_some(ink)
 }

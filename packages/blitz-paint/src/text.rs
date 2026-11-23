@@ -303,10 +303,7 @@ pub(crate) fn draw_glyph_run(
     if font_size <= 0.0 || color.components[3] <= 0.0 {
         return;
     }
-    let glyph_xform = run
-        .synthesis()
-        .skew()
-        .map(|angle| Affine::skew(-angle.to_radians().tan() as f64, 0.0));
+    let glyph_xform = glyph_transform(glyph_run);
 
     let embolden = if FONT_EMBOLDEN_ENABLED {
         font_embolden(font_size as f64, color, transform)
@@ -333,6 +330,14 @@ pub(crate) fn draw_glyph_run(
         }),
         AntiAliasing::Enabled,
     );
+}
+
+pub(crate) fn glyph_transform(glyph_run: &GlyphRun<'_, TextBrush>) -> Option<Affine> {
+    glyph_run
+        .run()
+        .synthesis()
+        .skew()
+        .map(|angle| Affine::skew(-angle.to_radians().tan() as f64, 0.0))
 }
 
 /// The layout-space box covered by a glyph run: its advance horizontally and the font's

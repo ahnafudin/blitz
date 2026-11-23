@@ -298,6 +298,7 @@ fn static_and_synthetic_italic_titles_keep_the_glyph_ink_in_a_local_crop() {
         let scene = paint_title(if italic { "font-style:italic" } else { "" }, TITLE_FONT);
         let (crop, layer_transform) = title_layer(&scene);
         let mut glyph_count = 0;
+        let mut overhang = false;
         for command in &scene.commands {
             let RenderCommand::GlyphRun(run) = command else {
                 continue;
@@ -314,10 +315,13 @@ fn static_and_synthetic_italic_titles_keep_the_glyph_ink_in_a_local_crop() {
                     b.x_max.into(),
                     (-b.y_min).into(),
                 );
+                let synthesis = run.glyph_transform.unwrap_or(Affine::IDENTITY);
+                let advance = metrics.advance_width(GlyphId::new(glyph.id)).unwrap();
+                overhang |= synthesis.transform_rect_bbox(outline).x1 > f64::from(advance);
                 let transform = layer_transform.inverse()
                     * run.transform
                     * Affine::translate((f64::from(glyph.x), f64::from(glyph.y)))
-                    * run.glyph_transform.unwrap_or(Affine::IDENTITY);
+                    * synthesis;
                 // Independent per-glyph outline bounds, plus the one-device-pixel
                 // hinting margin and the three-sigma blur halo (six pixels).
                 let visible = transform.transform_rect_bbox(outline).inflate(7.0, 7.0);
@@ -326,6 +330,10 @@ fn static_and_synthetic_italic_titles_keep_the_glyph_ink_in_a_local_crop() {
             }
         }
         assert!(glyph_count > 0);
+        assert!(
+            !italic || overhang,
+            "synthetic italic must extend past the advance"
+        );
         assert!(crop.width() < 175.0 && crop.height() < 145.0, "{crop:?}");
     }
 }
