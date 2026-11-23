@@ -21,9 +21,14 @@ fn paint(filter: &str, scale: f64) -> Result<Scene, FilterError> {
 }
 
 fn paint_html(html: &str, scale: f64) -> Result<Scene, FilterError> {
+    paint_html_with_font(html, scale, None)
+}
+
+fn paint_html_with_font(html: &str, scale: f64, font: Option<&[u8]>) -> Result<Scene, FilterError> {
     let mut doc = HtmlDocument::from_html(
         html,
         DocumentConfig {
+            font_ctx: font.map(blitz_dom::build_single_font_ctx),
             viewport: Some(Viewport {
                 window_size: (240, 200),
                 hidpi_scale: scale as f32,
@@ -252,6 +257,87 @@ fn unsupported_filter_members_keep_the_whole_list_refusal() {
         assert!(
             matches!(paint(value, 1.0), Err(FilterError::Unsupported(_))),
             "{value}"
+        );
+    }
+}
+
+const TITLE_FONT: &[u8] = include_bytes!("../../../examples/wasm_hello/assets/DejaVuSans.woff2");
+
+fn paint_title(css: &str, font: &[u8]) -> Scene {
+    let html = format!(
+        "<!doctype html><style>body{{margin:0}}
+         #t{{position:absolute;left:95px;top:70px;width:8px;height:12px;
+         padding:2.5px 3.5px;white-space:nowrap;font:32px/1 sans-serif;
+         filter:blur(2px);{css}}}</style><div id=t><span>ff</span></div>"
+    );
+    paint_html_with_font(&html, 1.0, Some(font)).unwrap()
+}
+
+fn title_layer(scene: &Scene) -> (kurbo::Rect, kurbo::Affine) {
+    scene
+        .commands
+        .iter()
+        .find_map(|command| match command {
+            RenderCommand::PushLayer(layer) => {
+                Some((layer.filter.as_ref()?.output_region()?, layer.transform))
+            }
+            _ => None,
+        })
+        .expect("blur on title")
+}
+
+#[test]
+fn static_and_synthetic_italic_titles_keep_the_glyph_ink_in_a_local_crop() {
+    use kurbo::{Affine, Rect};
+    use skrifa::{
+        FontRef, GlyphId, MetadataProvider as _,
+        instance::{LocationRef, Size},
+    };
+
+    for italic in [false, true] {
+        let scene = paint_title(if italic { "font-style:italic" } else { "" }, TITLE_FONT);
+        let (crop, layer_transform) = title_layer(&scene);
+        let mut glyph_count = 0;
+        for command in &scene.commands {
+            let RenderCommand::GlyphRun(run) = command else {
+                continue;
+            };
+            assert_eq!(run.glyph_transform.is_some(), italic);
+            let font =
+                FontRef::from_index(run.font_data.data.as_ref(), run.font_data.index).unwrap();
+            let metrics = font.glyph_metrics(Size::new(run.font_size), LocationRef::default());
+            for glyph in &run.glyphs {
+                let b = metrics.bounds(GlyphId::new(glyph.id)).unwrap();
+                let outline = Rect::new(
+                    b.x_min.into(),
+                    (-b.y_max).into(),
+                    b.x_max.into(),
+                    (-b.y_min).into(),
+                );
+                let transform = layer_transform.inverse()
+                    * run.transform
+                    * Affine::translate((f64::from(glyph.x), f64::from(glyph.y)))
+                    * run.glyph_transform.unwrap_or(Affine::IDENTITY);
+                // Independent per-glyph outline bounds, plus the one-device-pixel
+                // hinting margin and the three-sigma blur halo (six pixels).
+                let visible = transform.transform_rect_bbox(outline).inflate(7.0, 7.0);
+                assert_eq!(crop.union(visible), crop, "{visible:?} outside {crop:?}");
+                glyph_count += 1;
+            }
+        }
+        assert!(glyph_count > 0);
+        assert!(crop.width() < 175.0 && crop.height() < 145.0, "{crop:?}");
+    }
+}
+
+#[test]
+fn unmeasured_decorations_and_text_shadows_keep_the_viewport_crop() {
+    for style in ["text-decoration:overline", "text-shadow:80px 0 2px red"] {
+        let scene = paint_title(style, TITLE_FONT);
+        let (crop, _) = title_layer(&scene);
+        assert!(
+            crop.width() >= 240.0 && crop.height() >= 200.0,
+            "{style}: {crop:?}"
         );
     }
 }
