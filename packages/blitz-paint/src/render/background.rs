@@ -1,10 +1,10 @@
-use super::{ALMOST_OPAQUE, ElementCx, to_image_quality, to_peniko_image};
+use super::{ALMOST_OPAQUE, ElementCx, raster_sampler, to_image_quality};
 use crate::color::{Color, ToColorColor};
 use crate::gradient::to_peniko_gradient;
 use anyrender::{AntiAliasing, NonUniformRoundedRect, PaintScene};
 use blitz_dom::CopyStyleGetters;
 use blitz_dom::NodeId;
-use blitz_dom::node::{ImageData, ImageResourceData, SpecialElementData};
+use blitz_dom::node::{ImageResourceData, SpecialElementData};
 use kurbo::{self, Affine, Point, Rect, Shape, Size, Vec2};
 use peniko::{self, BlendMode, Compose, Fill, Mix};
 use style::{
@@ -268,7 +268,7 @@ impl ElementCx<'_, '_> {
     }
 
     /// Paint the backgrounds of the table's column groups, columns, row groups and rows
-    /// (in that order, bottom to top: CSS 2.1 §17.5.1).
+    /// (in that order, bottom to top: CSS 2.1 Â§17.5.1).
     ///
     /// These backgrounds are only painted behind the table's cells (not in the
     /// `border-spacing` between them, nor where a row has no cell), so they are
@@ -447,7 +447,7 @@ impl ElementCx<'_, '_> {
         let Some(bg_image) = layer.image_data else {
             return;
         };
-        let ImageData::Svg(svg) = &bg_image.image else {
+        let blitz_dom::node::ImageData::Svg(svg) = &bg_image.image else {
             return;
         };
 
@@ -545,17 +545,13 @@ impl ElementCx<'_, '_> {
         let bg_pos = (bg_pos.to_vec2() * self.scale).to_point();
         let bg_size = bg_size * self.scale;
 
-        let ImageData::Raster(image_data) = &bg_image.image else {
-            #[cfg(feature = "ahcut")]
-            if origin_rect.width() > 0.0
-                && origin_rect.height() > 0.0
-                && bg_size.width > 0.0
-                && bg_size.height > 0.0
-            {
-                self.refuse_image_facts();
-            }
+        if origin_rect.width() <= 0.
+            || origin_rect.height() <= 0.
+            || bg_size.width <= 0.
+            || bg_size.height <= 0.
+        {
             return;
-        };
+        }
 
         let x_ratio = bg_size.width / image_width;
         let y_ratio = bg_size.height / image_height;
@@ -589,6 +585,18 @@ impl ElementCx<'_, '_> {
             });
         let tile_rect = Rect::new(0.0, 0.0, x.rect_len, y.rect_len);
 
+        use BackgroundRepeatKeyword::{Repeat, Round};
+        if x.count == 0 || y.count == 0 {
+            return;
+        }
+        let sampler = raster_sampler(
+            quality,
+            matches!(*repeat_x, Repeat | Round),
+            matches!(*repeat_y, Repeat | Round),
+        );
+        let Some(brush) = self.raster_paint(&bg_image.image, sampler) else {
+            return;
+        };
         for hc in 0..y.count {
             for wc in 0..x.count {
                 let transform = transform.then_translate(Vec2 {
@@ -596,18 +604,6 @@ impl ElementCx<'_, '_> {
                     y: hc as f64 * y.stride,
                 });
 
-                let brush = to_peniko_image(image_data, quality);
-                // Only `repeat` and `round` fill their axis with one repeating brush; a tile drawn on its own
-                // (`no-repeat`, `space`) is a single image along that axis.
-                #[cfg(feature = "ahcut")]
-                let brush = {
-                    use BackgroundRepeatKeyword::{Repeat, Round};
-                    super::single_image_extend(
-                        brush,
-                        matches!(*repeat_x, Repeat | Round),
-                        matches!(*repeat_y, Repeat | Round),
-                    )
-                };
                 scene.fill(
                     peniko::Fill::NonZero,
                     transform,

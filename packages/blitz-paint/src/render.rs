@@ -24,8 +24,7 @@ use crate::text::{DrawTextContext, TextPaintOptions};
 use crate::{CustomWidgetSceneMap, SELECTION_COLOR};
 use anyrender::{AntiAliasing, PaintScene, Scene};
 use blitz_dom::node::{
-    ListItemLayout, ListItemLayoutPosition, Marker, NodeData, RasterImageData, TextInputData,
-    TextNodeData,
+    ListItemLayout, ListItemLayoutPosition, Marker, NodeData, TextInputData, TextNodeData,
 };
 use blitz_dom::{BaseDocument, ElementData, Node, NodeId, local_name};
 use blitz_traits::devtools::DevtoolSettings;
@@ -138,6 +137,13 @@ pub struct BlitzDomPainter<'dom, 'a> {
     /// Set by `try_paint_scene`.
     #[cfg(feature = "ahcut")]
     pub(crate) checked_filters: bool,
+    #[cfg(feature = "ahcut")]
+    pub(crate) project_images: RefCell<
+        std::collections::BTreeMap<
+            u32,
+            (blitz_traits::net::ImageFacts, Option<anyrender::ResourceId>),
+        >,
+    >,
     /// Reusable scratch allocations shared by all text layouts painted for this document.
     pub(crate) draw_text_context: RefCell<DrawTextContext>,
     /// Cached selection ranges for O(1) lookup: node_id -> (start_offset, end_offset)
@@ -202,6 +208,8 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
             filter_error: RefCell::new(None),
             #[cfg(feature = "ahcut")]
             checked_filters: false,
+            #[cfg(feature = "ahcut")]
+            project_images: RefCell::default(),
             draw_text_context: RefCell::new(DrawTextContext::default()),
             selection_ranges,
             custom_widget_scenes,
@@ -875,40 +883,21 @@ fn svg_viewport_affine(svg: &blitz_dom::node::SvgImageData, width: f32, height: 
     Affine::new([t.sx, t.ky, t.kx, t.sy, t.tx, t.ty].map(f64::from))
 }
 
-/// Ensure that the `resized_image` field has a correctly sized image
-fn to_peniko_image(image: &RasterImageData, quality: peniko::ImageQuality) -> peniko::ImageBrush {
-    peniko::ImageBrush {
-        image: ImageData {
-            data: image.data.clone(),
-            format: peniko::ImageFormat::Rgba8,
-            width: image.width,
-            height: image.height,
-            alpha_type: peniko::ImageAlphaType::Alpha,
-        },
-        sampler: ImageSampler {
-            x_extend: peniko::Extend::Repeat,
-            y_extend: peniko::Extend::Repeat,
-            quality,
-            alpha: 1.0,
-        },
+/// A single native tile samples its own edge colour. Repeating axes wrap.
+fn raster_sampler(quality: peniko::ImageQuality, repeat_x: bool, repeat_y: bool) -> ImageSampler {
+    let extend = |repeat| {
+        if repeat || !cfg!(feature = "ahcut") {
+            peniko::Extend::Repeat
+        } else {
+            peniko::Extend::Pad
+        }
+    };
+    ImageSampler {
+        x_extend: extend(repeat_x),
+        y_extend: extend(repeat_y),
+        quality,
+        alpha: 1.0,
     }
-}
-
-/// The brush of an image that is drawn once along an axis: its edge is the image's own colour there, not a
-/// blend with the opposite edge. An axis whose fill relies on the brush repeating keeps `Extend::Repeat`.
-#[cfg(feature = "ahcut")]
-fn single_image_extend(
-    mut brush: peniko::ImageBrush,
-    repeats_x: bool,
-    repeats_y: bool,
-) -> peniko::ImageBrush {
-    if !repeats_x {
-        brush.sampler.x_extend = peniko::Extend::Pad;
-    }
-    if !repeats_y {
-        brush.sampler.y_extend = peniko::Extend::Pad;
-    }
-    brush
 }
 
 /// A context of loaded and hot data to draw the element from
@@ -1440,31 +1429,47 @@ impl ElementCx<'_, '_> {
         );
     }
 
-    #[cfg(feature = "ahcut")]
-    fn refuse_image_facts(&self) {
-        if self.context.checked_filters {
-            self.context.filter_error.borrow_mut().get_or_insert(
-                anyrender::filters::FilterError::Unsupported(crate::IMAGE_PAINT_PENDING),
-            );
+    fn raster_paint(
+        &self,
+        image: &blitz_dom::node::ImageData,
+        sampler: ImageSampler,
+    ) -> Option<anyrender::Paint> {
+        match image {
+            blitz_dom::node::ImageData::Raster(image) => {
+                Some(anyrender::Paint::Image(peniko::ImageBrush {
+                    image: ImageData {
+                        data: image.data.clone(),
+                        format: peniko::ImageFormat::Rgba8,
+                        width: image.width,
+                        height: image.height,
+                        alpha_type: peniko::ImageAlphaType::Alpha,
+                    },
+                    sampler,
+                }))
+            }
+            #[cfg(feature = "ahcut")]
+            blitz_dom::node::ImageData::Facts(facts) if self.context.checked_filters => {
+                let mut images = self.context.project_images.borrow_mut();
+                let (_, resource) = images.entry(facts.asset).or_insert((*facts, None));
+                resource
+                    .map(|image| anyrender::Paint::Resource(peniko::ImageBrush { image, sampler }))
+            }
+            _ => None,
         }
     }
 
     fn draw_image(&self, scene: &mut impl PaintScene) {
-        #[cfg(feature = "ahcut")]
-        if matches!(
-            self.element.image_data(),
-            Some(blitz_dom::node::ImageData::Facts(_))
-        ) {
-            let size = self.frame.content_box();
-            if size.width() > 0.0 && size.height() > 0.0 {
-                self.refuse_image_facts();
-            }
-            return;
-        }
-        if let Some(image) = self.element.raster_image_data() {
+        if let Some((image, (image_width, image_height))) = self
+            .element
+            .image_data()
+            .and_then(|image| image.intrinsic_raster_size().map(|size| (image, size)))
+        {
             let content_box = self.frame.content_box();
             let width = content_box.width() as u32;
             let height = content_box.height() as u32;
+            if content_box.width() <= 0.0 || content_box.height() <= 0.0 {
+                return;
+            }
             let x = content_box.origin().x;
             let y = content_box.origin().y;
 
@@ -1479,8 +1484,8 @@ impl ElementCx<'_, '_> {
                 height: height as f32,
             };
             let object_size = taffy::Size {
-                width: image.width as f32,
-                height: image.height as f32,
+                width: image_width as f32,
+                height: image_height as f32,
             };
             let paint_size = compute_object_fit(container_size, Some(object_size), object_fit);
 
@@ -1508,10 +1513,23 @@ impl ElementCx<'_, '_> {
                 x_offset.px(),
                 y_offset.px(),
                 |scene| {
-                    let brush = to_peniko_image(image, quality);
-                    #[cfg(feature = "ahcut")]
-                    let brush = single_image_extend(brush, false, false);
-                    scene.draw_image(brush.as_ref(), transform);
+                    if let Some(brush) =
+                        self.raster_paint(image, raster_sampler(quality, false, false))
+                    {
+                        match brush {
+                            anyrender::Paint::Image(pixels) => {
+                                scene.draw_image(pixels.as_ref(), transform)
+                            }
+                            _ => scene.fill(
+                                Fill::NonZero,
+                                transform,
+                                brush.as_ref(),
+                                None,
+                                &Rect::new(0., 0., f64::from(image_width), f64::from(image_height)),
+                                AntiAliasing::Enabled,
+                            ),
+                        }
+                    }
                 },
             );
         }

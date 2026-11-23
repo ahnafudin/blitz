@@ -246,7 +246,7 @@ fn one_lookup_sizes_images_and_refuses_only_when_the_facts_are_painted() {
         assert_eq!(
             refusal,
             anyrender::filters::FilterError::Unsupported(
-                "IMAGE_PAINT_PENDING:draw the shape in SVG or omit the image until image paint lands"
+                "IMAGE_REFUSED:use a recording sink that binds frozen project images, or inline the shape as SVG"
             )
         );
         assert!(scene.commands.is_empty());

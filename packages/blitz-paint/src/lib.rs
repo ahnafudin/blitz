@@ -33,10 +33,9 @@ const SELECTION_COLOR: Color = Color::from_rgb8(180, 213, 255);
 /// Pre-computed `Scene`s for each CustomWidget, keyed by `(document id, node id)`
 type CustomWidgetSceneMap = HashMap<(usize, NodeId), Scene>;
 
-/// Refusal payload for a visible host image whose pixels are not yet available to this renderer.
+/// A checked painter must bind visible project images before it accepts any draw commands.
 #[cfg(feature = "ahcut")]
-pub const IMAGE_PAINT_PENDING: &str =
-    "IMAGE_PAINT_PENDING:draw the shape in SVG or omit the image until image paint lands";
+pub const IMAGE_RESOURCE_REFUSED: &str = "IMAGE_REFUSED:use a recording sink that binds frozen project images, or inline the shape as SVG";
 
 /// Paint a [`blitz_dom::BaseDocument`] by pushing drawing commands into
 /// an impl [`anyrender::PaintScene`].
@@ -155,6 +154,20 @@ pub fn try_paint_scene(
         generator.paint_scene(&mut anyrender::NullScenePainter);
         if let Some(error) = generator.filter_error.borrow_mut().take() {
             return Err(error);
+        }
+        let images = generator.project_images.get_mut();
+        if images
+            .values_mut()
+            .try_for_each(|(facts, resource)| {
+                *resource = Some(scene.try_register_custom_resource(Box::new(*facts))?);
+                Ok::<_, anyrender::RegisterResourceError>(())
+            })
+            .is_err()
+        {
+            for id in images.values().filter_map(|(_, resource)| *resource) {
+                scene.unregister_resource(id);
+            }
+            return Err(FilterError::Unsupported(IMAGE_RESOURCE_REFUSED));
         }
     }
     generator.paint_scene(scene);
