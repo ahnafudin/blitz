@@ -1,9 +1,11 @@
-//! With `ahcut`: CSSOM View's `offsetParent` for an absolute box, and the moves that frozen style sheets admit
-//! and refuse.
+//! With `ahcut`: CSSOM View's `offsetParent` for an absolute box, the moves that frozen style sheets admit
+//! and refuse, and the `src` property as the `src` attribute.
 #![cfg(feature = "ahcut")]
 
 use blitz_dom::DocumentConfig;
+use blitz_traits::net::{NetHandler, NetProvider, Request};
 use blitz_vibey_script::ScriptDocument;
+use std::sync::{Arc, Mutex};
 
 const HEAD_SHEET: &str =
     "#free,#held{position:absolute}#wrap{position:relative}#hidden{display:none}";
@@ -81,5 +83,47 @@ fn a_move_is_refused_only_when_it_touches_a_style_sheet() {
             "(h=>[h.parentNode===document.body,h.previousElementSibling.id,document.querySelectorAll('style').length,document.querySelector('style').textContent])(document.getElementById('holder'))"
         ),
         format!(r#"[true,"plain",2,"{HEAD_SHEET}"]"#)
+    );
+}
+
+/// Remembers every URL it is asked for and serves none.
+struct Asked(Mutex<Vec<String>>);
+
+impl NetProvider for Asked {
+    fn fetch(&self, _doc_id: usize, request: Request, handler: Box<dyn NetHandler>) {
+        let url = request.url.to_string();
+        self.0.lock().unwrap().push(url.clone());
+        handler.error(url, "nothing is served".into());
+    }
+}
+
+/// `img.src = url` writes the `src` attribute and asks for the image as `setAttribute('src', url)` does: at
+/// once on an element of the document, at the insertion of a new one. It reads back resolved; `srcset` is
+/// reflected as it is written. An element whose interface has no `src` keeps a plain property.
+#[test]
+fn the_src_property_is_the_src_attribute_and_starts_the_same_load() {
+    let asked = Arc::new(Asked(Mutex::new(Vec::new())));
+    let config = DocumentConfig {
+        base_url: Some("https://ahcut.invalid/page/index.html".to_owned()),
+        net_provider: Some(asked.clone()),
+        ..DocumentConfig::default()
+    };
+    let mut doc = ScriptDocument::from_html(
+        r#"<!doctype html><html><body><img id="a"><img id="b"><div id="d"></div></body></html>"#,
+        config,
+    );
+    doc.execute_scripts();
+    assert!(doc.take_js_errors().is_empty());
+    assert_eq!(
+        observe(
+            &mut doc,
+            "(()=>{const [a,b,d]=['a','b','d'].map(id=>document.getElementById(id));const before=[a.src,d.src];a.setAttribute('src','one.png');b.src='two.png';const late=document.createElement('img');late.src='three.png';document.body.appendChild(late);b.srcset='two.png 2x';d.src='four.png';return [before,a.src,b.src,b.getAttribute('src'),late.getAttribute('src'),b.srcset,b.getAttribute('srcset'),d.src,d.getAttribute('src')]})()"
+        ),
+        r#"[["",null],"https://ahcut.invalid/page/one.png","https://ahcut.invalid/page/two.png","two.png","three.png","two.png 2x","two.png 2x","four.png",null]"#
+    );
+    assert_eq!(
+        *asked.0.lock().unwrap(),
+        ["one.png", "two.png", "three.png"]
+            .map(|file| format!("https://ahcut.invalid/page/{file}"))
     );
 }
