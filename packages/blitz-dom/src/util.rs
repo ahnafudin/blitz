@@ -245,6 +245,31 @@ pub(crate) fn parse_svg_refusing_external(
         Some(check) => check.xml(source)?,
         None => Cow::Borrowed(source),
     };
+    parse_checked_svg_xml(&source, checked)
+}
+
+/// The serialized DOM is the authored input. Private geometry markers add no images or source charge.
+#[cfg(feature = "ahcut")]
+pub(crate) fn parse_geometry_svg(
+    authored: &str,
+    marked: &str,
+    budget: Option<&crate::SvgImageBudget>,
+) -> Result<crate::node::SvgImageData, usvg::Error> {
+    let checked = budget.map(crate::svg_budget::CheckedParse::new);
+    if checked
+        .as_ref()
+        .is_some_and(|check| !check.source_fits(authored.as_bytes()))
+    {
+        return Err(usvg::Error::ElementsLimitReached);
+    }
+    parse_checked_svg_xml(marked.as_bytes(), checked)
+}
+
+#[cfg(feature = "ahcut")]
+fn parse_checked_svg_xml(
+    source: &[u8],
+    checked: Option<crate::svg_budget::CheckedParse<'_>>,
+) -> Result<crate::node::SvgImageData, usvg::Error> {
     let embedded = std::sync::Mutex::new(crate::node::SvgRefusals::default());
     let default_data = usvg::ImageHrefResolver::default_data_resolver();
     let options = usvg::Options {
@@ -302,7 +327,7 @@ pub(crate) fn parse_svg_refusing_external(
         },
         ..Default::default()
     };
-    let mut svg = crate::node::SvgImageData::from_data(&source, &options)?;
+    let mut svg = crate::node::SvgImageData::from_data(source, &options)?;
     drop(options);
     svg.reservation = checked.map(crate::svg_budget::CheckedParse::into_reservation);
     let embedded = embedded.into_inner().unwrap();
