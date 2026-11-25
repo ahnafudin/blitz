@@ -90,6 +90,8 @@ pub use svg_budget::{SvgImageBudget, SvgImageLimits};
 #[cfg(feature = "ahcut")]
 pub use svg_text::{SvgImageUse, SvgTextPlace, SvgTextUse};
 mod svg_geometry;
+#[cfg(feature = "ahcut")]
+pub use svg_geometry::NESTED_VIEWPORT_GEOMETRY_REFUSAL;
 pub mod traversal;
 /// Versioned storage for the nodes of the DOM tree.
 mod tree;

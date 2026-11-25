@@ -2,7 +2,14 @@
 use crate::dom::{dom_ctx, this_node_id};
 use boa_engine::object::{ObjectInitializer, builtins::JsArray};
 use boa_engine::property::Attribute;
-use boa_engine::{Context, JsNativeError, JsResult, JsValue, js_string};
+use boa_engine::{Context, JsError, JsNativeError, JsResult, JsValue, js_string};
+
+fn geometry_error(message: String, context: &mut Context) -> JsError {
+    if message == blitz_dom::NESTED_VIEWPORT_GEOMETRY_REFUSAL {
+        return crate::refusal::type_error(blitz_dom::NESTED_VIEWPORT_GEOMETRY_REFUSAL, context);
+    }
+    JsNativeError::typ().with_message(message).into()
+}
 
 pub(super) fn bbox(this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
     if let Some(value) = args.first().filter(|value| !value.is_null_or_undefined()) {
@@ -29,7 +36,7 @@ pub(super) fn bbox(this: &JsValue, args: &[JsValue], context: &mut Context) -> J
         .doc
         .borrow_mut()
         .svg_bbox(id)
-        .map_err(|message| JsNativeError::typ().with_message(message))?;
+        .map_err(|message| geometry_error(message, context))?;
     Ok(ObjectInitializer::new(context)
         .property(js_string!("x"), bounds[0], Attribute::all())
         .property(js_string!("y"), bounds[1], Attribute::all())
@@ -46,6 +53,6 @@ pub(super) fn ctm(this: &JsValue, _: &[JsValue], context: &mut Context) -> JsRes
         .doc
         .borrow_mut()
         .svg_ctm(id)
-        .map_err(|message| JsNativeError::typ().with_message(message))?;
+        .map_err(|message| geometry_error(message, context))?;
     Ok(JsArray::from_iter(transform.into_iter().map(JsValue::from), context).into())
 }

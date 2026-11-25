@@ -1,6 +1,11 @@
 //! Geometry queries use the same SVG serialization and usvg geometry as native paint.
 use crate::{BaseDocument, NodeId};
 
+/// Script admission detail shared by both geometry bindings for a nested viewport target.
+#[cfg(feature = "ahcut")]
+pub const NESTED_VIEWPORT_GEOMETRY_REFUSAL: &str =
+    "SVG_NESTED_VIEWPORT_GEOMETRY_REFUSED:query a child graphic or the outer SVG element";
+
 impl BaseDocument {
     /// Object-space fill bounds and user-to-SVG-viewport transform, never fabricated geometry.
     pub fn svg_bbox(&mut self, node_id: NodeId) -> Result<[f64; 4], String> {
@@ -89,6 +94,13 @@ impl BaseDocument {
             })
             .last()
             .unwrap_or(viewport);
+        #[cfg(feature = "ahcut")]
+        if node_id == viewport_id && viewport.id != owner.id {
+            if let Some(message) = self.svg_limit_refusal() {
+                return Err(message.into_owned());
+            }
+            return Err(NESTED_VIEWPORT_GEOMETRY_REFUSAL.into());
+        }
         // Inline SVG is a replaced CSS box. Its nested viewports have no independent CSS layout.
         let nested_graphic = viewport.id != owner.id && viewport_id != node_id;
         let root = if nested_graphic { owner } else { viewport };

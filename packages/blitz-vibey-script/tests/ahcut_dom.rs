@@ -82,7 +82,8 @@ fn a_nested_svg_viewport_itself_returns_a_tagged_geometry_refusal() {
         },
     );
     doc.execute_scripts();
-    let expected = "SVG_NESTED_VIEWPORT_GEOMETRY_REFUSED:query a child graphic or the outer SVG element";
+    let expected =
+        "SVG_NESTED_VIEWPORT_GEOMETRY_REFUSED:query a child graphic or the outer SVG element";
     for method in ["getBBox", "getCTM"] {
         doc.eval(&format!("document.getElementById('inside').{method}()"));
         let errors = doc.take_uncaught_errors();
