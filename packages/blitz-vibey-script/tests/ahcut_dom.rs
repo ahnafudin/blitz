@@ -73,6 +73,26 @@ fn nested_svg_geometry_uses_its_viewport_and_excludes_transforms_above_it() {
 }
 
 #[test]
+fn a_nested_svg_viewport_itself_returns_a_tagged_geometry_refusal() {
+    let mut doc = ScriptDocument::from_html(
+        r#"<!doctype html><svg width="32" height="16"><svg id="inside" width="16" height="8"><rect width="2" height="2"/></svg></svg>"#,
+        DocumentConfig {
+            viewport: Some(Viewport::new(128, 64, 1.0, ColorScheme::Light)),
+            ..DocumentConfig::default()
+        },
+    );
+    doc.execute_scripts();
+    let expected = "SVG_NESTED_VIEWPORT_GEOMETRY_REFUSED:query a child graphic or the outer SVG element";
+    for method in ["getBBox", "getCTM"] {
+        doc.eval(&format!("document.getElementById('inside').{method}()"));
+        let errors = doc.take_uncaught_errors();
+        assert_eq!(errors.len(), 1, "{method}");
+        assert_eq!(errors[0].refusal.as_deref(), Some(expected), "{method}");
+        assert!(errors[0].message.contains(expected), "{method}");
+    }
+}
+
+#[test]
 fn checked_style_ingress_preserves_the_first_refusal_even_after_script_catches_it() {
     const MOTION: &str = "CSS_KEYFRAMES_REFUSED:write the animation on the timeline in __seek";
     const STROKE: &str = "STYLE_PROPERTY_REFUSED:use filled text or an outlined SVG path";
