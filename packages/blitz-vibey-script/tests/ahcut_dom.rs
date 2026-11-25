@@ -4,6 +4,7 @@
 
 use blitz_dom::{Document, DocumentConfig};
 use blitz_traits::net::{NetHandler, NetProvider, Request};
+use blitz_traits::shell::{ColorScheme, Viewport};
 use blitz_vibey_script::ScriptDocument;
 use std::sync::{Arc, Mutex};
 
@@ -22,30 +23,74 @@ fn geometry_reads_and_a_tween_rebuild_can_reuse_the_rendered_svg_allowance() {
         5,
     );
     // A 1x1 PNG uses four RGBA bytes, more than half the remaining allowance.
-    let html = r#"<svg width="32" height="16" xmlns="http://www.w3.org/2000/svg"><rect id="outer" width="3" height="2"/><svg width="16" height="16"><image width="4" height="4" href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+j6B8AAAAASUVORK5CYII="/><rect id="box" width="4" height="4"/></svg></svg>"#;
+    let html = r#"<!doctype html><svg style="display:block" width="32" height="16" xmlns="http://www.w3.org/2000/svg"><rect id="outer" width="3" height="2"/><svg width="16" height="16"><image width="4" height="4" href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+j6B8AAAAASUVORK5CYII="/><rect id="box" width="4" height="4"/></svg></svg>"#;
     let mut doc = ScriptDocument::from_html(
         html,
         DocumentConfig {
+            viewport: Some(Viewport::new(128, 64, 1.0, ColorScheme::Light)),
             svg_image_budget: Some(budget.clone()),
             ..DocumentConfig::default()
         },
     );
     doc.execute_scripts();
-    let bounds = observe(
-        &mut doc,
-        r#"(() => {
-        const box = document.getElementById("box");
-        const outer = document.getElementById("outer").getBBox().width;
-        const before = box.getBBox().width;
-        box.setAttribute("width", "6");
-        const result = [outer, before, box.getBBox().width, box.getCTM().a];
-        box.setAttribute("width", "8");
-        return result;
-    })()"#,
+    doc.eval(
+        "const outer = document.getElementById('outer'), box = document.getElementById('box')",
     );
-    assert_eq!(bounds, "[3,4,6,1]");
+    assert_eq!(observe(&mut doc, "outer.getBBox().width"), "3");
+    assert_eq!(observe(&mut doc, "box.getBBox().width"), "4");
+    doc.eval("box.setAttribute('width', '6')");
+    assert_eq!(observe(&mut doc, "box.getBBox().width"), "6");
+    assert_eq!(observe(&mut doc, "box.getCTM().a"), "1");
+    doc.eval("box.setAttribute('width', '8')");
     doc.inner_mut().resolve(0.0);
     assert_eq!(budget.refusal(), None);
+}
+
+#[test]
+fn nested_svg_geometry_uses_its_viewport_and_excludes_transforms_above_it() {
+    let mut doc = ScriptDocument::from_html(
+        r#"<!doctype html><svg style="display:block" width="80" height="40" viewBox="0 0 40 20">
+        <g transform="scale(3)"><svg x="3" y="2" width="50%" height="50%" viewBox="0 0 10 5">
+        <g transform="translate(1 1)"><rect id="box" width="30%" height="2"/></g>
+        </svg></g></svg>"#,
+        DocumentConfig {
+            viewport: Some(Viewport::new(128, 64, 1.0, ColorScheme::Light)),
+            ..DocumentConfig::default()
+        },
+    );
+    doc.execute_scripts();
+    assert_eq!(
+        observe(&mut doc, "document.getElementById('box').getBBox().width"),
+        "3"
+    );
+    assert_eq!(
+        observe(
+            &mut doc,
+            "(() => { const m = document.getElementById('box').getCTM(); return [m.a,m.d,m.e,m.f] })()"
+        ),
+        "[2,2,5,4]"
+    );
+}
+
+#[test]
+fn a_nested_svg_viewport_itself_returns_a_tagged_geometry_refusal() {
+    let mut doc = ScriptDocument::from_html(
+        r#"<!doctype html><svg width="32" height="16"><svg id="inside" width="16" height="8"><rect width="2" height="2"/></svg></svg>"#,
+        DocumentConfig {
+            viewport: Some(Viewport::new(128, 64, 1.0, ColorScheme::Light)),
+            ..DocumentConfig::default()
+        },
+    );
+    doc.execute_scripts();
+    let expected =
+        "SVG_NESTED_VIEWPORT_GEOMETRY_REFUSED:query a child graphic or the outer SVG element";
+    for method in ["getBBox", "getCTM"] {
+        doc.eval(&format!("document.getElementById('inside').{method}()"));
+        let errors = doc.take_uncaught_errors();
+        assert_eq!(errors.len(), 1, "{method}");
+        assert_eq!(errors[0].refusal.as_deref(), Some(expected), "{method}");
+        assert!(errors[0].message.contains(expected), "{method}");
+    }
 }
 
 #[test]

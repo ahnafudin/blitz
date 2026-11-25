@@ -1,6 +1,11 @@
 //! Geometry queries use the same SVG serialization and usvg geometry as native paint.
 use crate::{BaseDocument, NodeId};
 
+/// Script admission detail shared by both geometry bindings for a nested viewport target.
+#[cfg(feature = "ahcut")]
+pub const NESTED_VIEWPORT_GEOMETRY_REFUSAL: &str =
+    "SVG_NESTED_VIEWPORT_GEOMETRY_REFUSED:query a child graphic or the outer SVG element";
+
 impl BaseDocument {
     /// Object-space fill bounds and user-to-SVG-viewport transform, never fabricated geometry.
     pub fn svg_bbox(&mut self, node_id: NodeId) -> Result<[f64; 4], String> {
@@ -81,42 +86,57 @@ impl BaseDocument {
             viewport_id = candidate.parent.ok_or("SVG element has no viewport")?;
         }
         let viewport = self.get_node(viewport_id).unwrap();
-        let original = viewport.svg_source();
+        let owner = std::iter::successors(Some(viewport), |node| self.get_node(node.parent?))
+            .take_while(|node| node.element_data().is_some_and(|el| el.name.ns == ns!(svg)))
+            .filter(|node| {
+                node.element_data()
+                    .is_some_and(|el| el.name.local == local_name!("svg"))
+            })
+            .last()
+            .unwrap_or(viewport);
+        #[cfg(feature = "ahcut")]
+        if node_id == viewport_id && viewport.id != owner.id {
+            if let Some(message) = self.svg_limit_refusal() {
+                return Err(message.into_owned());
+            }
+            return Err(NESTED_VIEWPORT_GEOMETRY_REFUSAL.into());
+        }
+        // Inline SVG is a replaced CSS box. Its nested viewports have no independent CSS layout.
+        let nested_graphic = viewport.id != owner.id && viewport_id != node_id;
+        let root = if nested_graphic { owner } else { viewport };
+        let scope_parent = viewport
+            .parent
+            .filter(|id| nested_graphic && *id != root.id);
+        let original = root.svg_source();
         let mut marker = "__blitz_geometry_target__".to_owned();
         while original.contains(&marker) {
             marker.push('_');
         }
-        let source = if let Some(id) = existing_id {
-            marker = id;
-            original
-        } else {
-            viewport.svg_source_with_target(Some((node_id, &marker)))
-        };
+        let scope_marker = format!("{marker}scope");
+        let target_marker = existing_id.is_none().then_some((node_id, marker.as_str()));
+        let scope = scope_parent.map(|id| (id, scope_marker.as_str()));
+        let marked = (target_marker.is_some() || scope.is_some())
+            .then(|| root.svg_source_for_geometry(target_marker, scope));
+        let source = marked.as_deref().unwrap_or(&original);
         #[cfg(feature = "ahcut")]
         let geometry_budget = self.svg_image_budget.as_ref().map(|budget| {
             // A nested viewport is serialized in its outermost inline SVG's rendered tree.
-            let lease = std::iter::successors(Some(viewport), |node| self.get_node(node.parent?))
-                .map_while(|node| node.element_data().filter(|el| el.name.ns == ns!(svg)))
-                .filter(|el| el.name.local == local_name!("svg"))
-                .filter_map(|el| match el.image_data() {
-                    Some(crate::node::ImageData::Svg(svg)) => svg.reservation.as_deref(),
-                    _ => None,
-                })
-                .last();
+            let lease = owner.element_data().and_then(|el| match el.image_data() {
+                Some(crate::node::ImageData::Svg(svg)) => svg.reservation.as_deref(),
+                _ => None,
+            });
             budget.for_geometry(lease)
         });
-        let parsed = crate::util::parse_svg(
-            source.as_bytes(),
-            None,
-            #[cfg(feature = "ahcut")]
-            geometry_budget.as_ref(),
-        );
+        #[cfg(feature = "ahcut")]
+        let parsed = crate::util::parse_geometry_svg(&original, source, geometry_budget.as_ref());
+        #[cfg(not(feature = "ahcut"))]
+        let parsed = crate::util::parse_svg(source.as_bytes(), None);
         #[cfg(feature = "ahcut")]
         if let Some(message) = self.svg_limit_refusal() {
             return Err(message.into());
         }
         let svg = parsed.map_err(|error| format!("SVG geometry parse failed: {error}"))?;
-        let layout = viewport.final_layout();
+        let layout = root.final_layout();
         let width = layout.size.width
             - layout.border.left
             - layout.border.right
@@ -130,7 +150,24 @@ impl BaseDocument {
         if width <= 0.0 || height <= 0.0 {
             return Err("SVG viewport has no rendered area".into());
         }
-        let viewport_transform = svg.viewport_transform(width, height);
+        let viewport_transform = if nested_graphic {
+            // Map tree coordinates back to the parent of the closest viewport. Its own
+            // x/y, viewBox and transform stay in the CTM; ancestors above it do not.
+            let basis = if scope.is_some() {
+                let Some(usvg::Node::Group(group)) = svg.tree.node_by_id(&scope_marker) else {
+                    return Err("SVG viewport coordinate space is unavailable; place the graphic in a visible SVG group".into());
+                };
+                if !group.transform().is_identity() {
+                    return Err("SVG viewport coordinate space is unavailable; apply the transform to the graphic instead".into());
+                }
+                group.abs_transform()
+            } else {
+                svg.user_to_tree_transform()
+            };
+            basis.invert().ok_or("SVG viewport ancestor transform is singular; use an invertible transform on the enclosing group")?
+        } else {
+            svg.viewport_transform(width, height)
+        };
         // usvg has no box for an element without geometry; SVG's is empty, at the origin.
         let empty = || usvg::Rect::from_xywh(0.0, 0.0, 0.0, 0.0);
         let (bounds, transform) = if viewport_id == node_id {
@@ -149,7 +186,7 @@ impl BaseDocument {
         } else {
             let target = svg
                 .tree
-                .node_by_id(&marker)
+                .node_by_id(existing_id.as_deref().unwrap_or(&marker))
                 .ok_or("SVG element has no renderable geometry")?;
             (
                 target

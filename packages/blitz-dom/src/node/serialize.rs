@@ -28,6 +28,8 @@ struct SerializeOpts<'a> {
     skip_root_background: bool,
     /// Give this node the `id` an SVG geometry query looks it up by, in place of its own
     geometry_target: Option<(NodeId, &'a str)>,
+    /// Append a named empty group in this coordinate space for a nested viewport query.
+    geometry_space: Option<(NodeId, &'a str)>,
 }
 
 impl SerializeOpts<'_> {
@@ -39,6 +41,7 @@ impl SerializeOpts<'_> {
             skip_root_transform: false,
             skip_root_background: false,
             geometry_target: None,
+            geometry_space: None,
         }
     }
 }
@@ -160,11 +163,15 @@ impl Node {
     /// `currentColor` resolved against each element's computed `color`.
     #[cfg(feature = "svg")]
     pub(crate) fn svg_source(&self) -> String {
-        self.svg_source_with_target(None)
+        self.svg_source_for_geometry(None, None)
     }
 
     #[cfg(feature = "svg")]
-    pub(crate) fn svg_source_with_target(&self, target: Option<(NodeId, &str)>) -> String {
+    pub(crate) fn svg_source_for_geometry(
+        &self,
+        target: Option<(NodeId, &str)>,
+        space: Option<(NodeId, &str)>,
+    ) -> String {
         let mut output = String::new();
         let opts = SerializeOpts {
             style: OutputStyle::Normal,
@@ -173,6 +180,7 @@ impl Node {
             skip_root_transform: true,
             skip_root_background: true,
             geometry_target: target,
+            geometry_space: space,
         };
         self.write_outer_html_in_style(&mut output, opts, 0);
         output
@@ -326,6 +334,14 @@ impl Node {
                 if has_children {
                     for &child_id in &self.children {
                         self.tree()[child_id].write_outer_html_in_style(writer, opts, nesting + 1);
+                    }
+                    if let Some((id, marker)) = opts.geometry_space
+                        && self.id == id
+                    {
+                        // Last child preserves the first-child and sibling selectors of all authored nodes.
+                        writer.push_str("<g id=\"");
+                        writer.push_str(marker);
+                        writer.push_str("\" style=\"display:inline!important;transform:none!important;filter:none!important;clip-path:none!important;mask:none!important\"/>");
                     }
 
                     if matches!(style, OutputStyle::Pretty) {
