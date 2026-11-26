@@ -4,7 +4,7 @@ use blitz_dom::{BaseDocument, NodeId};
 use boa_engine::{Context, JsResult, JsValue, NativeFunction};
 
 const REBUILD: &str =
-    "STYLESHEET_REBUILD_REQUIRED:recreate ScriptDocument to change stylesheet definitions";
+    "STYLESHEET_REBUILD_REQUIRED:set styles on elements; declare style sheets in the initial HTML";
 const LINK_WRITE: &str =
     "STYLESHEET_REBUILD_REQUIRED:set link attributes in the HTML, not from script";
 pub(super) fn valid(context: &mut Context) -> JsResult<()> {

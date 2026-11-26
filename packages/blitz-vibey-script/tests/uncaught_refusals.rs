@@ -7,7 +7,7 @@ use blitz_vibey_script::ScriptDocument;
 const INSERT: &str = "SCRIPT_INSERT_REFUSED:declare the script in the initial HTML";
 const LINK: &str = "STYLESHEET_REBUILD_REQUIRED:set link attributes in the HTML, not from script";
 const SHEET: &str =
-    "STYLESHEET_REBUILD_REQUIRED:recreate ScriptDocument to change stylesheet definitions";
+    "STYLESHEET_REBUILD_REQUIRED:set styles on elements; declare style sheets in the initial HTML";
 const STROKE: &str = "STYLE_PROPERTY_REFUSED:use filled text or an outlined SVG path";
 const KEYFRAMES: &str = "CSS_KEYFRAMES_REFUSED:write the animation on the timeline in __seek";
 
