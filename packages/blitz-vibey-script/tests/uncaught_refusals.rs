@@ -78,7 +78,7 @@ fn an_invalidated_native_font_graph_preserves_its_own_refusal() {
     assert!(!doc.inner().font_stylesheets_valid());
     doc.eval("__blitz_font_snapshot()");
     let entries = doc.take_uncaught_errors();
-    let expected = "STYLESHEET_REBUILD_REQUIRED:invalidated font graph";
+    let expected = "STYLESHEET_REBUILD_REQUIRED:a caught style sheet change stopped font loading; declare style sheets in the initial HTML";
     assert!(!entries.is_empty());
     assert!(
         entries

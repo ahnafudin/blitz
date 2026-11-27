@@ -113,8 +113,7 @@ pub struct FontLoadingSnapshot {
 }
 impl BaseDocument {
     /// The diagnostic returned by the font snapshot after a frozen graph is invalidated.
-    pub const INVALIDATED_FONT_GRAPH: &'static str =
-        "STYLESHEET_REBUILD_REQUIRED:invalidated font graph";
+    pub const INVALIDATED_FONT_GRAPH: &'static str = "STYLESHEET_REBUILD_REQUIRED:a caught style sheet change stopped font loading; declare style sheets in the initial HTML";
 
     pub fn freeze_font_stylesheets(&self) {
         let mut state = self.font_loads.lock().unwrap();
